@@ -12,6 +12,28 @@ import pandas as pd
 
 
 EMBEDDING_PREFIX = "affinity_embeddings_"
+EMBEDDING_KEY_CHOICES: tuple[str, ...] = ("pair_mean1", "head1", "pair_mean2", "head2")
+
+
+def _normalize_embedding_keys(keys: Iterable[str] | None) -> set[str] | None:
+    if keys is None:
+        return None
+    cleaned = {key.strip().lower() for key in keys if key and key.strip()}
+    unknown = cleaned - set(EMBEDDING_KEY_CHOICES)
+    if unknown:
+        raise ValueError(
+            f"unknown embedding keys: {sorted(unknown)}. choose from {list(EMBEDDING_KEY_CHOICES)}"
+        )
+    return cleaned or None
+
+
+def _embedding_key_short_name(key: str) -> str:
+    base = "pair_mean" if "pair_mean" in key else "head" if "head" in key else None
+    if base is None:
+        return ""
+    suffix_match = re.search(r"(\d+)$", key)
+    suffix = suffix_match.group(1) if suffix_match else ""
+    return f"{base}{suffix}"
 
 
 def _target_filter(targets: Iterable[str] | None) -> set[str] | None:
@@ -61,10 +83,13 @@ def _embedding_key_order(key: str) -> tuple[int, int, str]:
     return suffix, base_order, key
 
 
-def _flatten_embedding(path: Path) -> dict[str, float]:
+def _flatten_embedding(path: Path, embedding_keys: set[str] | None = None) -> dict[str, float]:
     arrays = np.load(path)
     features: dict[str, float] = {}
     for key in sorted(arrays.files, key=_embedding_key_order):
+        short = _embedding_key_short_name(key)
+        if embedding_keys is not None and short not in embedding_keys:
+            continue
         array = np.asarray(arrays[key], dtype=np.float32)
         if array.ndim >= 2 and array.shape[0] > 1:
             array = array.mean(axis=0)
@@ -80,11 +105,13 @@ def discover_embedding_frame(
     roots: Iterable[Path],
     targets: Iterable[str] | None = None,
     variants: Iterable[str] | None = None,
+    embedding_keys: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     """Load all affinity embedding npz files under supported roots."""
 
     target_filter = _target_filter(targets)
     variant_filter = _variant_filter(variants)
+    key_filter = _normalize_embedding_keys(embedding_keys)
     rows: list[dict[str, object]] = []
     seen: set[tuple[str, str, str]] = set()
 
@@ -108,7 +135,7 @@ def discover_embedding_frame(
                 "ligand_id": ligand_id,
                 "embedding_path": str(path),
             }
-            row.update(_flatten_embedding(path))
+            row.update(_flatten_embedding(path, embedding_keys=key_filter))
             rows.append(row)
 
     return pd.DataFrame(rows)

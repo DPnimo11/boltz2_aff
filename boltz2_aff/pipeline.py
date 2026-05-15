@@ -11,11 +11,12 @@ import pandas as pd
 
 from boltz2_aff.data import load_ulvsh
 from boltz2_aff.features import (
+    EMBEDDING_KEY_CHOICES,
     discover_boltz_scalar_frame,
     discover_embedding_frame,
     feature_columns,
 )
-from boltz2_aff.modeling import train_classifier, train_regressor
+from boltz2_aff.modeling import boltz_baseline_metrics, train_classifier, train_regressor
 
 
 def _parse_args() -> argparse.Namespace:
@@ -37,6 +38,16 @@ def _parse_args() -> argparse.Namespace:
         "--feature-set",
         default="embeddings",
         choices=["embeddings", "boltz", "ulvsh_scores", "combined"],
+    )
+    parser.add_argument(
+        "--embedding-keys",
+        nargs="+",
+        default=None,
+        choices=list(EMBEDDING_KEY_CHOICES),
+        help=(
+            "Subset of Boltz affinity embedding components to use. "
+            "Choices are pair_mean1, head1, pair_mean2, head2 (default: all four)."
+        ),
     )
     parser.add_argument(
         "--tasks",
@@ -70,7 +81,8 @@ def _merge_features(
         frame = labels.copy()
         frame["variant"] = "ulvsh"
 
-    if needs_boltz and not boltz_scalars.empty and needs_embeddings:
+    have_scalars_in_frame = any(c.startswith("boltz_") for c in frame.columns)
+    if not boltz_scalars.empty and needs_embeddings and not have_scalars_in_frame:
         scalar_columns = [
             column
             for column in boltz_scalars.columns
@@ -118,6 +130,7 @@ def _write_manifest(
         "embedding_roots": [str(path) for path in embedding_roots],
         "boltz_output_root": str(args.boltz_output_root),
         "feature_set": args.feature_set,
+        "embedding_keys": args.embedding_keys,
         "targets_requested": args.targets,
         "variants_requested": args.variants,
         "score_source": args.score_source,
@@ -141,7 +154,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     embedding_roots = list(dict.fromkeys([*args.embedding_root, args.boltz_output_root]))
     labels = load_ulvsh(args.ulvsh_root, args.targets, args.score_source, include_scores=True)
-    embeddings = discover_embedding_frame(embedding_roots, args.targets, args.variants)
+    embeddings = discover_embedding_frame(
+        embedding_roots, args.targets, args.variants, embedding_keys=args.embedding_keys
+    )
     boltz_scalars = discover_boltz_scalar_frame(args.boltz_output_root, args.targets, args.variants)
     frame = _merge_features(labels, embeddings, boltz_scalars, args.feature_set)
     frame["group_id"] = frame["target"].astype(str) + "::" + frame["ligand_id"].astype(str)
@@ -189,6 +204,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             model_dir,
             max_splits=args.max_cv_splits,
         )
+    task_metrics["boltz_baseline"] = boltz_baseline_metrics(frame)
 
     _write_manifest(
         out_dir,

@@ -69,6 +69,78 @@ def _safe_float(value: Any) -> float | None:
     return value_float
 
 
+BOLTZ_BASELINE_SCORE_COLUMNS: tuple[str, ...] = (
+    "boltz_affinity_pred_value",
+    "boltz_affinity_probability_binary",
+)
+
+
+def _is_higher_score_more_active(column: str) -> bool:
+    """Return True when larger raw values should rank actives above inactives."""
+    return column != "boltz_affinity_pred_value"
+
+
+def _auc_against_active(scores: np.ndarray, labels: np.ndarray, higher_is_active: bool) -> float | None:
+    if scores.size == 0 or len(np.unique(labels)) < 2:
+        return None
+    oriented = scores if higher_is_active else -scores
+    return float(roc_auc_score(labels, oriented))
+
+
+def boltz_baseline_metrics(frame: pd.DataFrame) -> dict[str, Any]:
+    """Per-target ROC AUC and rank correlations from raw Boltz scalar outputs."""
+
+    available_scores = [
+        column for column in BOLTZ_BASELINE_SCORE_COLUMNS if column in frame.columns
+    ]
+    if not available_scores:
+        return {"status": "skipped", "reason": "no Boltz scalar columns in dataset"}
+
+    targets = sorted(frame["target"].dropna().unique().tolist())
+    per_target: dict[str, dict[str, Any]] = {}
+    for target in targets:
+        rows = frame[frame["target"] == target]
+        target_metrics: dict[str, Any] = {
+            "n_rows": int(len(rows)),
+            "n_with_active": int(rows["active_bool"].notna().sum()) if "active_bool" in rows else 0,
+            "n_with_p_affinity": int(rows["p_affinity"].notna().sum()) if "p_affinity" in rows else 0,
+        }
+        if "active_bool" in rows.columns:
+            active_mask = rows["active_bool"].notna().to_numpy()
+            active_labels = rows.loc[active_mask, "active_bool"].astype(bool).astype(int).to_numpy()
+            for column in available_scores:
+                scores = pd.to_numeric(rows.loc[active_mask, column], errors="coerce")
+                valid = scores.notna().to_numpy()
+                auc = _auc_against_active(
+                    scores.to_numpy()[valid],
+                    active_labels[valid],
+                    higher_is_active=_is_higher_score_more_active(column),
+                )
+                if auc is not None:
+                    target_metrics[f"{column}_roc_auc"] = auc
+                    target_metrics[f"{column}_n_for_auc"] = int(valid.sum())
+        if "p_affinity" in rows.columns:
+            regression_rows = rows[rows["p_affinity"].notna()]
+            y = pd.to_numeric(regression_rows["p_affinity"], errors="coerce").to_numpy()
+            for column in available_scores:
+                preds = pd.to_numeric(regression_rows[column], errors="coerce").to_numpy()
+                mask = np.isfinite(preds) & np.isfinite(y)
+                if mask.sum() >= 3:
+                    sign = 1.0 if _is_higher_score_more_active(column) else -1.0
+                    target_metrics[f"{column}_pearson_r"] = float(pearsonr(y[mask], sign * preds[mask]).statistic)
+                    target_metrics[f"{column}_spearman_r"] = float(spearmanr(y[mask], sign * preds[mask]).statistic)
+                    target_metrics[f"{column}_n_for_corr"] = int(mask.sum())
+        per_target[target] = target_metrics
+
+    summary: dict[str, Any] = {"status": "fit", "score_columns": list(available_scores), "per_target": per_target}
+    for column in available_scores:
+        aucs = [m.get(f"{column}_roc_auc") for m in per_target.values() if m.get(f"{column}_roc_auc") is not None]
+        if aucs:
+            summary[f"{column}_median_roc_auc"] = float(np.median(aucs))
+            summary[f"{column}_mean_roc_auc"] = float(np.mean(aucs))
+    return summary
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     serializable = {
         key: _safe_float(value) if isinstance(value, (np.floating, float)) else value
@@ -142,6 +214,53 @@ def train_classifier(
     return metrics
 
 
+def _screening_auc(
+    frame: pd.DataFrame,
+    feature_columns: list[str],
+    model: Pipeline,
+    max_splits: int,
+) -> dict[str, Any] | None:
+    """Score every active-labeled row by training the regressor on numeric-affinity rows in each fold."""
+
+    if "active_bool" not in frame.columns:
+        return None
+    labeled = frame[frame["active_bool"].notna()].copy()
+    if labeled.empty:
+        return None
+    y_active = labeled["active_bool"].astype(bool).astype(int).to_numpy()
+    if len(np.unique(y_active)) < 2:
+        return {"cv_roc_auc_note": "need both active classes in dataset"}
+
+    has_target = labeled["p_affinity"].notna().to_numpy()
+    if has_target.sum() < 3:
+        return {"cv_roc_auc_note": "need at least three numeric affinity rows for screening AUC"}
+
+    groups = labeled["group_id"].astype(str).to_numpy()
+    cv = _classification_cv(y_active, groups, max_splits, random_state=42)
+    if cv is None:
+        return {"cv_roc_auc_note": "not enough grouped class balance for screening AUC CV"}
+
+    x_all = _as_feature_matrix(labeled, feature_columns)
+    y_target = pd.to_numeric(labeled["p_affinity"], errors="coerce").to_numpy(dtype=float)
+    pred = np.full(len(labeled), np.nan)
+    for train_idx, test_idx in cv.split(x_all, y_active, groups=groups):
+        train_mask = has_target[train_idx]
+        if train_mask.sum() < 2:
+            continue
+        fitted = clone(model).fit(x_all[train_idx][train_mask], y_target[train_idx][train_mask])
+        pred[test_idx] = fitted.predict(x_all[test_idx])
+
+    scored = np.isfinite(pred)
+    if scored.sum() == 0 or len(np.unique(y_active[scored])) < 2:
+        return {"cv_roc_auc_note": "no usable screening predictions"}
+    return {
+        "cv_roc_auc": float(roc_auc_score(y_active[scored], pred[scored])),
+        "cv_roc_auc_n_rows": int(scored.sum()),
+        "cv_roc_auc_positive_rows": int(y_active[scored].sum()),
+        "cv_roc_auc_negative_rows": int((1 - y_active[scored]).sum()),
+    }
+
+
 def train_regressor(
     frame: pd.DataFrame,
     feature_columns: list[str],
@@ -181,6 +300,9 @@ def train_regressor(
                 "cv_spearman_r": spearmanr(y, pred).statistic,
             }
         )
+        screening = _screening_auc(frame, feature_columns, model, max_splits)
+        if screening is not None:
+            metrics.update(screening)
         predictions = rows[
             ["target", "variant", "ligand_id", "affinity_source", "affinity_um", "p_affinity", "group_id"]
         ].copy()
