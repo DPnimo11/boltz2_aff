@@ -11,6 +11,14 @@ The embedding extraction behavior is documented in the neighboring Boltz fork at
 `affinity_embeddings_<ligand>.npz` files containing pooled affinity
 representations from immediately before the Boltz-2 scalar affinity heads.
 
+## Data Sources
+
+- ULVSH affinity labels, docking scores, and structure files:
+  https://lab.drugdesign.unistra.fr/datasets/ulvsh/
+- Boltz-2 paper input files used to run the published examples/benchmarks
+  (not the ULVSH affinity-label source):
+  https://zenodo.org/records/16946890
+
 ## Setup
 
 The code uses standard scientific Python packages:
