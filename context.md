@@ -125,38 +125,69 @@ python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_swee
 python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_sweep_combined --feature-set combined
 ```
 
-## Current ROCK1 Findings (2026-05-15)
+## Multi-Target Sweep Findings (2026-05-17)
 
-68 rows for classification, 27 for regression. Best results vs raw Boltz B2-C
-baseline (AUC 0.854, Pearson 0.710, Spearman 0.707):
+All 10 targets now have embeddings under `targets/`. Full per-target sweep
+(9 embedding combos × `embeddings` and `combined` feature sets) is in
+`runs/sweep_embeddings/` and `runs/sweep_combined/` (`summary_by_target.json`,
+`medians.json`).
 
-- `pair_mean1` + `combined`: classifier AUC 0.908. Best classifier.
-- `pair_mean1+pair_mean2` + `combined`: regressor Pearson 0.803,
-  Spearman 0.809, R² 0.644. Best regressor.
-- The full 1024-dim embedding concatenation (`all`) is *worse* than the
-  pair-mean subsets on every metric — the 384-dim head components overfit at
-  n=27 (`head2` alone hits R² = -11.92).
+**ROCK1 was an outlier — the embedding models do NOT clearly beat raw Boltz
+across targets.**
+
+Classification (combined feature set, honest *fixed* `pair_mean1` choice, not
+post-hoc best-combo) vs the better of raw Boltz B2-A/B2-C per target:
+
+- Median embedding cls AUC 0.753 vs median raw Boltz 0.768 — a slight loss.
+- `pair_mean1` beats raw Boltz on only **5/10** targets.
+- Big embedding wins: CASR (0.824 vs 0.645), DRD3 (0.943 vs 0.846),
+  ROCK1 (0.908 vs 0.854). Big losses: ADRA2B (0.250 vs 0.917, only n=13),
+  MTR1A (0.442 vs 0.597).
+- The earlier "8/10 win" figure was post-hoc best-combo selection on the same
+  CV (optimistic bias); the fixed-choice number above is the honest one.
+
+No universal best embedding component: ROCK1→pair_mean, CASR/CNR2/SC6A4→head1,
+ADRA2B→head2. The ROCK1-only "pair_mean always wins" conclusion does **not**
+generalize.
+
+Regression is effectively broken outside ROCK1:
+
+- 4/10 targets (CNR1, DRD3, SC6A4, SGMR2) have **zero** uncensored numeric
+  affinity rows — regression is skipped entirely.
+- Of the 6 that fit, only ROCK1 (n=27) gives a strong positive Pearson
+  (~0.80). CASR (n=148) is weakly positive (~0.50); CNR2/MTR1A/DRD4/ADRA2B
+  are near-zero or negative. Median regression Pearson across targets is
+  negative for almost every combo.
+
+Bottom line: the user's original intuition holds — embeddings do not beat the
+native Boltz-2 affinity predictor in aggregate. ROCK1 was a lucky target.
 
 ## Caveats
 
-- Only ROCK1 currently has embedding files. Other 9 ULVSH targets need
-  embedding extraction from `../boltz` before they can be modeled. ULVSH-wide
-  `manifest.json` reports 875 labels missing embeddings.
-- n=27 for regression means CV is noisy: 5 folds = ~5 test rows each. The
-  embedding sweep differences should be read as broad trends, not precise
-  rankings.
-- ULVSH does not provide numeric IC50/Ki for inactives (they're censored or
+- Per-target n is tiny for several targets (ADRA2B clsN=13, DRD3 clsN=32,
+  SC6A4 clsN=33, MTR1A clsN=36). AUC at n≈13 is essentially noise — ADRA2B's
+  0.250 should not be over-interpreted.
+- Picking the best combo per target using the same CV that scores it is
+  optimistically biased. Report a single fixed combo for honest comparison,
+  or add nested CV / a held-out split before claiming wins.
+- ULVSH does not provide numeric IC50/Ki for inactives (censored or
   percent-style), so the regression subset is all-active. Hence the screening
   AUC implementation that predicts on inactives despite training on actives.
+- Regression is only meaningfully trainable for CASR (148), DRD4 (74), and
+  ROCK1 (27); elsewhere there is too little numeric affinity data.
 
 ## Possible Next Steps
 
-- Extract embeddings for the other 9 targets so each can be modeled per the
-  same pipeline.
+- Add nested CV or a held-out test split so per-target combo selection is not
+  optimistically biased; re-evaluate the classification "wins" honestly.
+- Focus regression effort on CASR/DRD4/ROCK1 only — the rest lack numeric
+  affinity data. Consider dropping regression from the headline entirely and
+  framing the project as binary classification (as the paper does).
 - Try PLS regression or PCA→ridge to handle p≫n for the `head` components
   rather than discarding them.
 - Train the regressor on `p_affinity − boltz_affinity_pred_value` (residual on
   top of Boltz scalar) to see whether embeddings add information beyond what
   Boltz already encodes scalarly.
-- For multi-target sweeps, treat per-target ROC AUC as the primary metric and
-  report median across targets as the paper does.
+- Investigate why CASR/DRD3 embeddings beat raw Boltz so decisively but
+  ADRA2B/MTR1A fail — may correlate with refolding accuracy discussed in the
+  paper.
