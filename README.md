@@ -21,6 +21,11 @@ Boltz-2 scalar affinity heads.
 - Methodology reference: Bret, Sindt, Rognan, *Assessing Boltz-2 Performance
   for the Binding Classification of Docking Hits*, J. Chem. Inf. Model. 2026,
   66, 1511-1521. PDF in `papers/`.
+- Boltz-2 model: Passaro et al., *Boltz-2: Towards Accurate and Efficient
+  Binding Affinity Prediction*, bioRxiv 2025.06.14.659707. PDF in `papers/`.
+- LRIP / interaction-profile scoring (planned feature set): Ji et al.,
+  *Briefings in Bioinformatics* 22(5) 2021 (`papers/bbab054.pdf`); Niu et al.,
+  LRIP-SF (`papers/aef2177_CombinedPDF_v1.pdf`).
 
 ## Setup
 
@@ -125,32 +130,46 @@ changes:
   `active_bool` and Pearson/Spearman against `p_affinity`. This is the bar
   the embedding models need to beat.
 
-## ROCK1 Embedding Sweep (current findings)
+## Per-Target Embedding Sweep (current findings)
 
-`scripts/sweep_embedding_keys.py` runs the pipeline once per embedding
-combination and prints a summary table.
+`scripts/sweep_embedding_keys.py` runs the pipeline once per target per
+embedding combination and writes `summary.json`, `summary_by_target.json`,
+and `medians.json` (paper-style median across targets).
 
 ```powershell
-python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_sweep --feature-set embeddings
-python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_sweep_combined --feature-set combined
+python scripts/sweep_embedding_keys.py --feature-set embeddings --out-root runs/sweep_embeddings
+python scripts/sweep_embedding_keys.py --feature-set combined  --out-root runs/sweep_combined
 ```
 
-Headlines on ROCK1 (`runs/rock1_sweep_combined/summary.json`):
+**Honest headline across all 10 targets (not ROCK1 alone):** the embedding
+models do *not* clearly beat raw Boltz-2. With a fixed `pair_mean1` + combined
+choice, median classification AUC is 0.753 vs median raw Boltz (best of
+B2-A/B2-C per target) 0.768 — embeddings win on only 5/10 targets. ROCK1
+(AUC 0.908) and DRD3/CASR are strong wins; ADRA2B (n=13) and MTR1A are clear
+losses. Regression is broken outside ROCK1: 4/10 targets have zero numeric
+affinity rows, and median Pearson across targets is negative for nearly every
+combo. There is **no universal best embedding component** — it varies by
+target. See `context.md` "Multi-Target Sweep Findings" for the full table and
+caveats (including the optimistic bias of post-hoc combo selection).
 
-| Setup | Cls AUC | Reg Pearson | Reg Spearman | Reg R² |
+## Suggested Peptide Systems (planned Part 2)
+
+For the peptide/mutation robustness study (does Boltz-2 track mutational
+effects?), candidate systems with ≥30 quantified mutational variants of one
+peptide against one receptor:
+
+| System | Peptide | Receptor(s) | Data source | Notes |
 |---|---|---|---|---|
-| Raw Boltz B2-C baseline | 0.854 | 0.710 | 0.707 | — |
-| Raw Boltz B2-A baseline | 0.795 | 0.664 | 0.635 | — |
-| `pair_mean1` + combined | **0.908** | 0.748 | 0.719 | 0.558 |
-| `pair_mean1+pair_mean2` + combined | 0.869 | **0.803** | **0.809** | **0.644** |
-| All 4 components + combined | 0.844 | 0.698 | 0.750 | 0.290 |
-| `head2` alone | 0.770 | 0.437 | 0.669 | -11.92 |
+| **BH3 (top pick)** | ~26-mer α-helix (BIM/BID/PUMA bg) | MCL-1, BCL-xL | Keating lab — Jenson et al., *eLife* 2018 and related affinity datasets | Hundreds of single + combinatorial variants, SPR/FP Kd, wide dynamic range, dual receptor (selectivity) |
+| **p53 TAD** | p53(17–28) helix + pDI/PMI variants | MDM2, MDMX | Curated literature Kd; phage-optimized variants | Small well-defined interface; dozens of variants |
+| **MHC-I nonamer** | 9-mer (e.g. NLVPMVATV, GILGFVFTL) | HLA-A*02:01 | IEDB / NetMHCpan | Thousands of single substitutions; mixed assays — scale stress-test |
+| **PDZ / CRIPT** | C-terminal peptide | PSD-95 PDZ3 | Peptide saturation-mutagenesis literature | Short interface, low dynamic range — harder secondary case |
 
-The pair-mean components carry the signal; the head components consistently
-overfit at n=27. Member 1 alone is enough for classification, both pair-mean
-ensembles together for regression.
+Evaluation for Part 2 is within-series Spearman and ΔΔG sign agreement vs
+wild-type, not pooled AUC. See `context.md` "Planned Part 2".
 
 ## Notes for Future Work
 
-See `context.md` for AI-facing project context, current caveats, expected
-data layout, and an architecture overview.
+See `context.md` for AI-facing project context, the LRIP feature-set plan,
+the Part 2 peptide/mutation plan, current caveats, and an architecture
+overview.

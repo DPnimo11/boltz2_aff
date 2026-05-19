@@ -191,3 +191,99 @@ native Boltz-2 affinity predictor in aggregate. ROCK1 was a lucky target.
 - Investigate why CASR/DRD3 embeddings beat raw Boltz so decisively but
   ADRA2B/MTR1A fail — may correlate with refolding accuracy discussed in the
   paper.
+
+## Planned: LRIP Interaction-Profile Feature Set
+
+Add a fifth feature block based on **ligand–residue interaction profiles
+(LRIP / IP-SF)** from the Junmei Wang lab:
+
+- `papers/bbab054.pdf` — Ji et al., *Briefings in Bioinformatics* 22(5) 2021:
+  original IP-SF. Features = per-residue ligand–receptor interaction energies
+  from docking → minimization/MD → MM-GBSA free-energy decomposition. GBDT,
+  per-target. Reported mean ROC AUC 0.87 across 6 targets vs Glide 0.71.
+- `papers/aef2177_CombinedPDF_v1.pdf` — Niu et al., LRIP-SF: scaled-up
+  evaluation (670 complexes, 16 targets), mapping-pose (MP) vs DOCK pose
+  protocols, random forest, plus selectivity (JAK1/TYK2) and a global
+  sensitivity-analysis hotspot framework.
+
+Why it matters here: LRIP is a *physically motivated, mechanistically
+interpretable, target-specific* feature, the natural counterpoint to Boltz-2's
+*learned latent* embeddings. The same per-target pipeline can compare
+`embeddings` vs `lrip` vs `combined+lrip`, and LRIP extends cleanly to
+peptide–protein interfaces (per-residue energies) for Part 2 below.
+
+Integration sketch: a `score_lrip_<resid>` column block computed from the
+ULVSH docked/cofolded poses (or Boltz-2 cofolded pose) via MM-GBSA decomposition,
+discovered by `features.py` with an `lrip` / `combined_lrip` feature set. This
+requires a pose + an MM-GBSA decomposition step (Amber/`MMPBSA.py` or
+equivalent) — heavier than current feature blocks; scope before building.
+
+## Planned Part 2: Peptide / Mutation Robustness
+
+Goal: test whether Boltz-2 (raw scalars *and* the embedding models) tracks the
+**effect of mutations** on binding, using peptide ligands with deep
+mutational series. This directly extends the Rognan paper's mutation/shuffle
+challenges from the receptor side to the *ligand* side, and probes the central
+"physics vs. memorization" question: a model that memorized ChEMBL ligands
+should fail to rank a tight mutational series it never saw.
+
+Evaluation differs from Part 1: the relevant metrics are **within-series rank
+correlation** (Spearman of predicted vs measured across the mutant set) and
+**ΔΔG sign agreement** relative to the wild-type peptide — not pooled AUC.
+LRIP per-residue energies are especially interpretable here (which interface
+residue drives the mutational effect).
+
+Candidate systems (all have ≥30 quantified mutational variants of one peptide
+against one receptor; see "Suggested Peptide Systems" in README for dataset
+pointers):
+
+1. **BH3 peptide ↔ MCL-1 / BCL-xL** (Keating lab; Jenson et al. eLife 2018
+   and related). Hundreds of α-helical ~26-mer BH3 variants (BIM/BID/PUMA
+   backgrounds) with SPR/FP Kd against both MCL-1 and BCL-xL. Best dynamic
+   range and the cleanest single + combinatorial mutant series. **Top pick.**
+2. **p53 TAD peptide ↔ MDM2 / MDMX**. The p53(17–28) helix plus phage-
+   optimized variants (pDI, PMI) and systematic single mutants — dozens of
+   Kd values, well-curated, small well-defined interface.
+3. **HLA-A*02:01 ↔ nonamer peptide** (e.g., CMV pp65 NLVPMVATV or influenza
+   GILGFVFTL). IEDB / NetMHCpan give hundreds-to-thousands of single-
+   substitution variants with measured IC50 — huge n, but mixed assay
+   conditions; good for a scale stress-test.
+4. **PDZ domain (PSD-95 PDZ3) ↔ CRIPT C-terminal peptide**. Peptide-side
+   saturation data; short interface, lower dynamic range — use as a harder
+   secondary case.
+
+Caveats to design for: assay-type heterogeneity (Kd vs IC50 vs FP), narrow
+affinity dynamic range for some peptide series, and the fact that Boltz-2's
+affinity head was trained predominantly on small molecules — peptide
+generalization is exactly the open question, not an assumption.
+
+### Mutation injection: two designs
+
+The affinity head never reads sequence directly — it reads the structure
+trunk's representation of the cofolded complex. A mutation can therefore move
+the prediction via (1) the **structure path** (trunk re-poses the complex) or
+(2) the **affinity-head path** (head reacts to changed interface chemistry on
+a given structure). Two experimental designs separate these:
+
+- **Option A — re-cofold each mutant (PRIMARY).** Change the peptide
+  sequence and run the full Boltz-2 pipeline fresh per variant; both paths
+  live. This is the realistic, end-to-end, headline experiment and the
+  default for Part 2. (User confirmed 2026-05-17: re-running Boltz-2 for
+  every variant.)
+- **Option B — fixed wild-type pose, vary only the affinity input
+  (FOLLOW-UP DIAGNOSTIC).** Pin the structure to the WT cofolded complex
+  (template / distance-constraint conditioning, or feeding the WT structure
+  directly into the affinity module if the `../boltz` fork exposes it) so the
+  trunk representation is ~constant across variants; only the mutated residue
+  identity changes. Kills the structure path, isolating the affinity-head
+  path.
+
+Rationale: the Rognan paper found Boltz-2 affinity largely *insensitive* to
+binding-site mutations. If Option A reproduces that flatness, Option A alone
+cannot say whether the trunk failed to re-pose or the head ignored a real
+structural change — Option B is the diagnostic that localizes the failure.
+Build B only if A shows the insensitivity.
+
+**Architecture constraint:** keep pose generation and affinity scoring as
+separable pipeline steps so the fixed-template path (Option B) can be added
+later without a rewrite. Do not couple them.
