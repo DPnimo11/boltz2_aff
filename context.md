@@ -62,10 +62,25 @@ Use `--embedding-keys pair_mean1 [pair_mean2 head1 head2]` to restrict.
   `p_affinity = 6 - log10(value_uM)` so larger values mean stronger binding.
 - Cross-validation groups rows by `target::ligand_id` so multiple Boltz
   variants for the same ligand cannot leak across folds.
-- The default linear baselines are deliberately conservative:
-  L2-regularized logistic regression for classification, ridge regression
-  (`RidgeCV` over `np.logspace(-4, 4, 33)`) for `p_affinity`. The pipeline
-  always emits both `classifier.joblib` and `regressor.joblib`.
+- Classification uses a `RandomForestClassifier(n_estimators=200,
+  class_weight="balanced", max_features="sqrt")`. An adaptive PCA step is
+  inserted before the RF when `n_samples < 5 × n_features` and
+  `n_pca = min(n_samples // 5, 30) ≥ 2`, preventing the forest from
+  memorising noise in high-dimensional, small-n regimes (e.g. ADRA2B n=13
+  → 2 PCA components; ROCK1 n=68 → 13 components).
+- Regression uses `RidgeCV` over `np.logspace(-4, 4, 33)`. When
+  `boltz_affinity_pred_value` is present in ≥80% of rows, the regressor
+  trains on the **residual** `p_affinity − (−boltz_pred_value)` so it
+  learns corrections on top of Boltz-2's own scalar rather than the raw
+  affinity. CV predictions are back-transformed to absolute `p_affinity`
+  before metrics are computed; `residual_mode` and `residual_boltz_column`
+  are logged in `metrics_regression.json`.
+- The pipeline always emits both `classifier.joblib` and `regressor.joblib`.
+- Motivation for the RF switch: Ji et al. (IP-SF, JCIM 2021) and Niu et al.
+  (LRIP-SF) both show linear classifiers perform worst for per-residue
+  interaction-energy features; GBDT/RF consistently outperform by large
+  margins. The same nonlinearity argument applies to learned embedding
+  features.
 
 ## Feature Sets
 
@@ -178,6 +193,10 @@ native Boltz-2 affinity predictor in aggregate. ROCK1 was a lucky target.
 
 ## Possible Next Steps
 
+- **[done 2026-05-19]** Replace `LogisticRegression` with `RandomForestClassifier`
+  + adaptive PCA in `modeling.py`; add residual regression mode.
+- Re-run the 10-target sweep with the new RF classifier to get updated headline
+  numbers (`runs/sweep_embeddings_rf/`, `runs/sweep_combined_rf/`).
 - Add nested CV or a held-out test split so per-target combo selection is not
   optimistically biased; re-evaluate the classification "wins" honestly.
 - Focus regression effort on CASR/DRD4/ROCK1 only — the rest lack numeric
@@ -185,9 +204,6 @@ native Boltz-2 affinity predictor in aggregate. ROCK1 was a lucky target.
   framing the project as binary classification (as the paper does).
 - Try PLS regression or PCA→ridge to handle p≫n for the `head` components
   rather than discarding them.
-- Train the regressor on `p_affinity − boltz_affinity_pred_value` (residual on
-  top of Boltz scalar) to see whether embeddings add information beyond what
-  Boltz already encodes scalarly.
 - Investigate why CASR/DRD3 embeddings beat raw Boltz so decisively but
   ADRA2B/MTR1A fail — may correlate with refolding accuracy discussed in the
   paper.

@@ -11,8 +11,10 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
 from sklearn.base import clone
+from sklearn.decomposition import PCA
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression, RidgeCV
+from sklearn.linear_model import RidgeCV
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -149,6 +151,23 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(serializable, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _build_classifier_pipeline(n_samples: int, n_features: int, random_state: int) -> Pipeline:
+    classifier = RandomForestClassifier(
+        n_estimators=200,
+        class_weight="balanced",
+        max_features="sqrt",
+        random_state=random_state,
+        n_jobs=-1,
+    )
+    steps: list = [("imputer", _imputer()), ("scaler", StandardScaler())]
+    # PCA when n << p to prevent RF from memorising noise dimensions
+    n_pca = min(n_samples // 5, 30)
+    if n_pca >= 2 and n_features > n_pca:
+        steps.append(("pca", PCA(n_components=n_pca)))
+    steps.append(("model", classifier))
+    return Pipeline(steps)
+
+
 def train_classifier(
     frame: pd.DataFrame,
     feature_columns: list[str],
@@ -163,21 +182,7 @@ def train_classifier(
 
     x = _as_feature_matrix(rows, feature_columns)
     groups = rows["group_id"].astype(str).to_numpy()
-    model = Pipeline(
-        [
-            ("imputer", _imputer()),
-            ("scaler", StandardScaler()),
-            (
-                "model",
-                LogisticRegression(
-                    class_weight="balanced",
-                    max_iter=5000,
-                    random_state=random_state,
-                    solver="liblinear",
-                ),
-            ),
-        ]
-    )
+    model = _build_classifier_pipeline(len(rows), len(feature_columns), random_state)
 
     metrics: dict[str, Any] = {
         "status": "fit",
@@ -266,12 +271,29 @@ def train_regressor(
     feature_columns: list[str],
     out_dir: Path,
     max_splits: int = 5,
+    boltz_residual_column: str | None = "boltz_affinity_pred_value",
 ) -> dict[str, Any]:
     rows = frame[frame["p_affinity"].notna()].copy()
     if len(rows) < 3:
         return {"status": "skipped", "reason": "regression requires at least three numeric affinity rows"}
 
-    y = rows["p_affinity"].astype(float).to_numpy()
+    # Residual mode: train on p_affinity - boltz_scalar so the model corrects Boltz-2
+    boltz_oriented_arr: np.ndarray | None = None
+    residual_col = None
+    if boltz_residual_column and boltz_residual_column in rows.columns:
+        boltz_vals = pd.to_numeric(rows[boltz_residual_column], errors="coerce")
+        # boltz_affinity_pred_value is negative (lower = tighter); negate so larger = stronger
+        boltz_oriented = -boltz_vals if boltz_residual_column == "boltz_affinity_pred_value" else boltz_vals
+        valid_boltz = boltz_oriented.notna()
+        if valid_boltz.sum() >= len(rows) * 0.8:
+            rows = rows[valid_boltz].copy()
+            boltz_oriented_valid = boltz_oriented[valid_boltz]
+            boltz_oriented_arr = boltz_oriented_valid.to_numpy(dtype=float)
+            rows["_residual"] = rows["p_affinity"].astype(float).values - boltz_oriented_arr
+            residual_col = "_residual"
+
+    y_raw = rows["p_affinity"].astype(float).to_numpy()
+    y = rows[residual_col].astype(float).to_numpy() if residual_col else y_raw
     x = _as_feature_matrix(rows, feature_columns)
     groups = rows["group_id"].astype(str).to_numpy()
     model = Pipeline(
@@ -286,18 +308,25 @@ def train_regressor(
         "status": "fit",
         "n_rows": int(len(rows)),
         "n_features": int(len(feature_columns)),
+        "residual_mode": residual_col is not None,
+        "residual_boltz_column": boltz_residual_column if residual_col else None,
     }
     cv = _regression_cv(groups, max_splits)
     if cv is not None:
-        pred = cross_val_predict(model, x, y, groups=groups, cv=cv)
+        pred_residual = cross_val_predict(model, x, y, groups=groups, cv=cv)
+        # Reconstruct absolute p_affinity predictions for residual mode
+        if residual_col and boltz_oriented_arr is not None:
+            pred = pred_residual + boltz_oriented_arr
+        else:
+            pred = pred_residual
         metrics.update(
             {
                 "cv_splits": int(cv.n_splits),
-                "cv_rmse_p_affinity": float(np.sqrt(mean_squared_error(y, pred))),
-                "cv_mae_p_affinity": mean_absolute_error(y, pred),
-                "cv_r2": r2_score(y, pred),
-                "cv_pearson_r": pearsonr(y, pred).statistic,
-                "cv_spearman_r": spearmanr(y, pred).statistic,
+                "cv_rmse_p_affinity": float(np.sqrt(mean_squared_error(y_raw, pred))),
+                "cv_mae_p_affinity": mean_absolute_error(y_raw, pred),
+                "cv_r2": r2_score(y_raw, pred),
+                "cv_pearson_r": pearsonr(y_raw, pred).statistic,
+                "cv_spearman_r": spearmanr(y_raw, pred).statistic,
             }
         )
         screening = _screening_auc(frame, feature_columns, model, max_splits)
