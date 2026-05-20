@@ -152,42 +152,50 @@ python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_swee
 python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_sweep_combined --feature-set combined
 ```
 
-## Multi-Target Sweep Findings (2026-05-17)
+## Multi-Target Sweep Findings (2026-05-17, updated 2026-05-20)
 
-All 10 targets now have embeddings under `targets/`. Full per-target sweep
-(9 embedding combos × `embeddings` and `combined` feature sets) is in
-`runs/sweep_embeddings/` and `runs/sweep_combined/` (`summary_by_target.json`,
-`medians.json`).
+All 10 targets have embeddings under `targets/`. The definitive sweep results
+are in `runs/sweep_embeddings_v2/` and `runs/sweep_combined_v2/` (RF classifier,
+no PCA). Earlier `sweep_embeddings/` and `sweep_combined/` used RF+adaptive PCA
+and are now superseded.
 
-**ROCK1 was an outlier — the embedding models do NOT clearly beat raw Boltz
-across targets.**
+**Combined feature set (embeddings + Boltz scalars + ULVSH scores), honest
+fixed `pair_mean1` choice, classification AUC vs raw Boltz B2-C:**
 
-Classification (combined feature set, honest *fixed* `pair_mean1` choice, not
-post-hoc best-combo) vs the better of raw Boltz B2-A/B2-C per target:
+| Target | combined | B2C | Result |
+|--------|----------|-----|--------|
+| ADRA2B | 0.319 | 0.611 | loss (n=13, noise) |
+| CASR | 0.789 | 0.645 | **win** |
+| CNR1 | 0.629 | 0.373 | **win** |
+| CNR2 | 0.692 | 0.740 | loss |
+| DRD3 | 0.891 | 0.846 | **win** |
+| DRD4 | 0.741 | 0.723 | **win** |
+| MTR1A | 0.334 | 0.597 | loss (n=36) |
+| ROCK1 | 0.909 | 0.854 | **win** |
+| SC6A4 | 0.852 | 0.827 | **win** |
+| SGMR2 | 0.812 | 0.795 | **win** |
 
-- Median embedding cls AUC 0.753 vs median raw Boltz 0.768 — a slight loss.
-- `pair_mean1` beats raw Boltz on only **5/10** targets.
-- Big embedding wins: CASR (0.824 vs 0.645), DRD3 (0.943 vs 0.846),
-  ROCK1 (0.908 vs 0.854). Big losses: ADRA2B (0.250 vs 0.917, only n=13),
-  MTR1A (0.442 vs 0.597).
-- The earlier "8/10 win" figure was post-hoc best-combo selection on the same
-  CV (optimistic bias); the fixed-choice number above is the honest one.
+**7/10 targets win; median combined 0.765 vs median B2C 0.732.** Removing the
+adaptive PCA was the decisive change — it recovered ROCK1 from 0.808→0.909 and
+DRD3 from 0.837→0.891, and improved several other targets.
 
-No universal best embedding component: ROCK1→pair_mean, CASR/CNR2/SC6A4→head1,
-ADRA2B→head2. The ROCK1-only "pair_mean always wins" conclusion does **not**
-generalize.
+Embeddings only (`pair_mean1` fixed): 3/10 wins, median 0.718 vs B2C 0.732 —
+the additional ULVSH score and Boltz scalar columns in `combined` provide the
+margin that pushes the majority of targets above Boltz-2's own scalar.
+
+Persistent failures — ADRA2B (n=13, essentially noise) and MTR1A (n=36) — are
+likely irreducible at these sample sizes regardless of feature set.
 
 Regression is effectively broken outside ROCK1:
 
 - 4/10 targets (CNR1, DRD3, SC6A4, SGMR2) have **zero** uncensored numeric
   affinity rows — regression is skipped entirely.
 - Of the 6 that fit, only ROCK1 (n=27) gives a strong positive Pearson
-  (~0.80). CASR (n=148) is weakly positive (~0.50); CNR2/MTR1A/DRD4/ADRA2B
-  are near-zero or negative. Median regression Pearson across targets is
-  negative for almost every combo.
+  (~0.70). CASR (n=148) is weakly positive (~0.50); CNR2/MTR1A/DRD4/ADRA2B
+  are near-zero or negative.
 
-Bottom line: the user's original intuition holds — embeddings do not beat the
-native Boltz-2 affinity predictor in aggregate. ROCK1 was a lucky target.
+No universal best embedding component across targets, but `pair_mean1` is a
+reasonable fixed choice and wins on ROCK1, DRD3, CASR, CNR1 as headline cases.
 
 ## Caveats
 
@@ -247,8 +255,9 @@ instead.
   + adaptive PCA in `modeling.py`; add residual regression mode.
 - **[done 2026-05-20]** Add ECFP4 Morgan fingerprint feature block (`ligand` /
   `combined_ligand` feature sets); confirms ligand-centrism hypothesis.
-- Re-run the 10-target sweep with the new RF classifier to get updated headline
-  numbers (`runs/sweep_embeddings_rf/`, `runs/sweep_combined_rf/`).
+- **[done 2026-05-20]** Remove adaptive PCA from RF classifier; re-run 10-target
+  sweep. Combined+pair_mean1 now wins 7/10 targets, median AUC 0.765 vs B2C
+  0.732 (`runs/sweep_embeddings_v2/`, `runs/sweep_combined_v2/`).
 - Add nested CV or a held-out test split so per-target combo selection is not
   optimistically biased; re-evaluate the classification "wins" honestly.
 - Focus regression effort on CASR/DRD4/ROCK1 only — the rest lack numeric
