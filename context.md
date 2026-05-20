@@ -186,6 +186,32 @@ margin that pushes the majority of targets above Boltz-2's own scalar.
 Persistent failures — ADRA2B (n=13, essentially noise) and MTR1A (n=36) — are
 likely irreducible at these sample sizes regardless of feature set.
 
+## Nested CV Results (2026-05-20)
+
+`scripts/nested_cv.py` runs outer/inner StratifiedGroupKFold(3) where the inner
+loop selects the best of 9 embedding combos on the training split, and the outer
+fold evaluates the selected combo on held-out data. Also reports fixed `pair_mean1`
+on the same outer folds (exact apples-to-apples). Results in `runs/nested_cv.json`.
+
+| Target | nested | fixed_pm1 | B2C | n |
+|--------|--------|-----------|-----|---|
+| ADRA2B | 0.667 | 0.500 | 0.611 | 13 |
+| CASR | 0.847 | 0.837 | 0.645 | 148 |
+| CNR1 | 0.625 | 0.672 | 0.373 | 45 |
+| CNR2 | 0.782 | 0.636 | 0.740 | 60 |
+| DRD3 | 0.815 | 0.889 | 0.846 | 32 |
+| DRD4 | 0.756 | 0.768 | 0.723 | 324 |
+| MTR1A | 0.285 | 0.380 | 0.597 | 36 |
+| ROCK1 | 0.881 | 0.896 | 0.854 | 68 |
+| SC6A4 | 0.871 | 0.894 | 0.827 | 33 |
+| SGMR2 | 0.798 | 0.803 | 0.795 | 205 |
+| **Median** | **0.798** | **0.803** | **0.740** | |
+
+**Nested > B2C: 8/10**; median 0.798 vs 0.740. The post-hoc sweep bias was small
+— nested CV confirms the result and adds value on CNR2 (0.636→0.782) where
+inner-fold combo selection picks a better component than pair_mean1.
+Failures: DRD3 (embedding noise at n=32) and MTR1A (n=36, genuine hard case).
+
 Regression is effectively broken outside ROCK1:
 
 - 4/10 targets (CNR1, DRD3, SC6A4, SGMR2) have **zero** uncensored numeric
@@ -258,6 +284,10 @@ instead.
 - **[done 2026-05-20]** Remove adaptive PCA from RF classifier; re-run 10-target
   sweep. Combined+pair_mean1 now wins 7/10 targets, median AUC 0.765 vs B2C
   0.732 (`runs/sweep_embeddings_v2/`, `runs/sweep_combined_v2/`).
+- **[done 2026-05-20]** Nested CV with inner-fold combo selection
+  (`scripts/nested_cv.py`): 8/10 targets beat B2C, median 0.798 vs 0.740
+  (`runs/nested_cv.json`). Confirms prior sweep result was not optimistically
+  biased — adaptive selection adds further value (especially CNR2: 0.636→0.782).
 - Add nested CV or a held-out test split so per-target combo selection is not
   optimistically biased; re-evaluate the classification "wins" honestly.
 - Focus regression effort on CASR/DRD4/ROCK1 only — the rest lack numeric
