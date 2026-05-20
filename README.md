@@ -62,7 +62,6 @@ Use `--feature-set` to choose the modeling input:
   (28 numeric features per ligand: glide, vina, MMGB/SA, etc.).
 - `combined`: concatenation of the three feature blocks above. For ROCK1 this
   gives 1024 (embeddings) + 6 (Boltz scalars) + ~25 (ULVSH scores) ≈ 1055 cols.
-
 Regardless of feature set, whenever Boltz scalar JSONs are present they are
 also merged into `dataset.csv` as metadata columns so the pipeline can report
 the raw Boltz-2 baseline ROC AUC against the same rows.
@@ -141,16 +140,34 @@ python scripts/sweep_embedding_keys.py --feature-set embeddings --out-root runs/
 python scripts/sweep_embedding_keys.py --feature-set combined  --out-root runs/sweep_combined
 ```
 
-**Honest headline across all 10 targets (not ROCK1 alone):** the embedding
-models do *not* clearly beat raw Boltz-2. With a fixed `pair_mean1` + combined
-choice, median classification AUC is 0.753 vs median raw Boltz (best of
-B2-A/B2-C per target) 0.768 — embeddings win on only 5/10 targets. ROCK1
-(AUC 0.908) and DRD3/CASR are strong wins; ADRA2B (n=13) and MTR1A are clear
-losses. Regression is broken outside ROCK1: 4/10 targets have zero numeric
-affinity rows, and median Pearson across targets is negative for nearly every
-combo. There is **no universal best embedding component** — it varies by
-target. See `context.md` "Multi-Target Sweep Findings" for the full table and
-caveats (including the optimistic bias of post-hoc combo selection).
+**Headline result (no-PCA RF, nested CV, all 10 targets):**
+
+The combined feature set (embeddings + Boltz scalars + ULVSH scores) with
+inner-fold combo selection beats raw Boltz-2 B2-C on **8/10 targets**, median
+classification AUC **0.798 vs 0.740**. With a single fixed `pair_mean1` combo,
+7/10 targets win (median 0.803 vs 0.740). Removing the adaptive PCA from the
+RF classifier was the decisive change — it recovered ROCK1 from 0.808 to 0.912
+and restored results across most targets.
+
+```powershell
+# Reproduce the sweep (all 10 targets, 9 embedding combos each)
+python scripts/sweep_embedding_keys.py --feature-set combined --out-root runs/sweep_combined_v2
+
+# Reproduce the nested CV (outer/inner combo selection, unbiased estimate)
+python scripts/nested_cv.py --out runs/nested_cv.json
+```
+
+Persistent failures: ADRA2B (n=13, noise-dominated) and MTR1A (n=36, likely
+poor cofold pose quality). There is **no universal best embedding component** —
+it varies by target; `pair_mean1` is a reasonable default.
+
+**Regression** is a secondary result. Four targets (CNR1, DRD3, SC6A4, SGMR2)
+have no uncensored numeric affinity rows and are skipped. Of the remainder,
+only ROCK1 (n=27, Pearson ~0.70) and CASR (n=148, Pearson ~0.50) give
+meaningful signal. The more informative metric is `regression.cv_roc_auc` —
+the screening AUC (train on actives-only rows, rank all test rows against
+`active_bool`) — which reaches 0.84 on ROCK1. See `context.md` for the full
+per-target breakdown and caveats.
 
 ## Suggested Peptide Systems (planned Part 2)
 
