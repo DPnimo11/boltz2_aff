@@ -36,6 +36,11 @@ across 10 targets of 0.763.
 - The currently available extracted embedding set is
   `targets/ROCK1/affinity_embeddings_*.npz` (68 of 69 ROCK1 ligands; `mol_44`
   is missing).
+- **Part 2 (peptide / mutation robustness):** source papers and supplementary
+  files live under `papers/peptides/{bh3,p53,p53_2,HLA_A0201}/`. Parsed
+  mutational tables are written to `data/peptides/<system>/` by
+  `scripts/parse_<system>_mutants.py`. See "Planned Part 2" below for the
+  per-system source-of-truth files.
 
 ## Embedding Provenance
 
@@ -340,29 +345,97 @@ correlation** (Spearman of predicted vs measured across the mutant set) and
 LRIP per-residue energies are especially interpretable here (which interface
 residue drives the mutational effect).
 
-Candidate systems (all have ≥30 quantified mutational variants of one peptide
-against one receptor; see "Suggested Peptide Systems" in README for dataset
-pointers):
+### Confirmed systems and local data sources (2026-05-20)
 
-1. **BH3 peptide ↔ MCL-1 / BCL-xL** (Keating lab; Jenson et al. eLife 2018
-   and related). Hundreds of α-helical ~26-mer BH3 variants (BIM/BID/PUMA
-   backgrounds) with SPR/FP Kd against both MCL-1 and BCL-xL. Best dynamic
-   range and the cleanest single + combinatorial mutant series. **Top pick.**
-2. **p53 TAD peptide ↔ MDM2 / MDMX**. The p53(17–28) helix plus phage-
-   optimized variants (pDI, PMI) and systematic single mutants — dozens of
-   Kd values, well-curated, small well-defined interface.
-3. **HLA-A*02:01 ↔ nonamer peptide** (e.g., CMV pp65 NLVPMVATV or influenza
-   GILGFVFTL). IEDB / NetMHCpan give hundreds-to-thousands of single-
-   substitution variants with measured IC50 — huge n, but mixed assay
-   conditions; good for a scale stress-test.
-4. **PDZ domain (PSD-95 PDZ3) ↔ CRIPT C-terminal peptide**. Peptide-side
-   saturation data; short interface, lower dynamic range — use as a harder
-   secondary case.
+After auditing the available papers, two systems have sufficient locally-stored
+mutational data to drive Part 2:
 
-Caveats to design for: assay-type heterogeneity (Kd vs IC50 vs FP), narrow
-affinity dynamic range for some peptide series, and the fact that Boltz-2's
-affinity head was trained predominantly on small molecules — peptide
-generalization is exactly the open question, not an assumption.
+1. **BH3 peptide ↔ Mcl-1 / Bcl-xL / Bfl-1** — **headline system.**
+   Source: Jenson et al. PNAS 2018 (`papers/peptides/bh3/jenson-et-al-2018-...pdf`)
+   plus the Keating lab SORTCERY data repository cloned at
+   `papers/peptides/bh3/sortcery_design/` (upstream:
+   https://github.com/KeatingLab/sortcery_design). The `csv/` subfolder ships
+   ten files; main + replicate pairs cover Bcl-xL (~4395 unique 22-mer peptides
+   in `x1.csv`/`x1r.csv`), Mcl-1 (~4491 in `m1.csv`/`m1r.csv`), and Bfl-1
+   (~3806 in `f100.csv`/`f100r.csv`). Each row carries the peptide sequence
+   (`protein`), parent background (`bg`: B=Bim, P=PUMA), apparent affinity
+   (`x1_expectedValue` / `m1_expectedValue` / `f100_expectedValue`), apparent
+   binding energy (`*_energy`), and quality flags (`isUnimodal`,
+   `isOneHitWonder`). Peptides differ from Bim or PUMA at up to 8 positions
+   — clean within-background mutational series. Companion structural
+   reference: Jenson, Ryan, Grant, Letai, Keating 2017 eLife
+   (DOI 10.7554/eLife.25541; PUMA-background epistatic variants with X-ray
+   structures), not stored locally but cited as a high-quality validation slice.
+
+2. **p53 TAD peptide ↔ MDM2 / MDMX** — **secondary system.**
+   Mutational data: Li, Pazgier et al. *J Mol Biol* 2010, stored at
+   `papers/peptides/p53_2/1-s2.0-S0022283610002433-main.pdf` (PMID 20226197,
+   PMC2856455). Systematic Ala-scan of PMI (TSFAEYWNLLSP) and (17–28)p53
+   (ETFSDLWKLLPE) — Table 1 (PMI + 16 analogs) and Table 3 ((17–28)p53 + 15
+   analogs) report ITC Kd values against both synMDM2 and synMDMX; plus
+   10 truncation analogs. Net ~17 single-mutant point-substitution variants
+   per scaffold × 2 receptors. Two scaffolds pooled gives ~34 within-series
+   measurements per receptor — just clears the ≥30 threshold. Treat
+   truncations as a separate sub-analysis (length-changes, not point
+   mutations). Structural baseline (synMDM2-PMI, synMDMX-PMI crystal
+   structures): Pazgier et al. PNAS 2009 at `papers/peptides/p53/` — kept
+   as the WT-Kd reference and source of the binding-mode reference structure.
+
+### Deferred / dropped systems
+
+- **HLA-A*02:01 ↔ nonamer peptide** — *deferred*. The stored Trolle et al.
+  *Bioinformatics* 2015 paper (`papers/peptides/HLA_A0201/`) is the IEDB
+  automated benchmarking framework, not a single-peptide deep mutational scan
+  — its ~4000 measurements are scattered across 17 alleles. A clean
+  single-parent series would need to be curated from IEDB (filter
+  HLA-A*02:01 + 9-mer + quantitative IC50 + ≤1 mutation from a parent
+  epitope) or pulled from Sidney/Sette positional scanning libraries. Set
+  aside until BH3 + p53 are working — the headline systems already cover
+  five receptors (Bcl-xL, Mcl-1, Bfl-1, MDM2, MDMX), which is plenty.
+- **PDZ domain ↔ CRIPT peptide** — *not pursued.* No data downloaded; would
+  have been a tertiary case.
+
+Caveats to design for: assay-type heterogeneity (apparent-Kd from yeast-display
+SORTCERY for BH3 vs SPR competition Kd for p53; **correction** — earlier
+note erroneously said ITC for p53, but Li 2010 used SPR competition,
+Methods page 12 of the PDF), differing affinity dynamic ranges, and the
+fact that Boltz-2's affinity head was trained predominantly on small
+molecules — peptide generalization is exactly the open question, not an
+assumption. The SORTCERY apparent affinities are an internally consistent
+ranking within one target (the appropriate input for Spearman / ΔΔG-sign
+analysis) but should not be cross-compared in absolute units to the p53 SPR
+Kds.
+
+### Ingested datasets (2026-05-20)
+
+Two ingestion scripts and their outputs:
+
+- `scripts/parse_bh3_sortcery.py` → `data/peptides/bh3/measurements.tsv`
+  (27,499 long-format rows across 10 SORTCERY CSVs). Per-target unique
+  peptide counts: Bcl-xL 10,142 (includes pilot screen), Mcl-1 4,491,
+  Bfl-1 3,805. All rows pass `is_unimodal=True / is_one_hit_wonder=False`
+  quality flags. Backgrounds: Bim (B) and PUMA (P). Apparent-value range
+  per target ≈ 1.5–11 (monotonic with log10 K_D on the cell-surface scale;
+  sign convention is *higher = tighter* — confirm against the SORTCERY
+  paper before using absolute values).
+
+- `scripts/parse_p53_li2010.py` → `data/peptides/p53/measurements.tsv`
+  (72 rows = 2 scaffolds × 2 receptors × 18 peptide entries). The script
+  encodes Li 2010 Tables 1 and 3 as Python literals because both tables
+  are rendered as raster images in the PDF (PNG crops kept under
+  `data/peptides/p53/raw/` for audit). PMI/MDM2 dynamic range is 5.5
+  log-units (490 pM → 160 μM); the (17–28)p53/MDMX series is the narrowest
+  at ≈2.9 log-units. F19A and W23A on the p53 scaffold are tagged
+  `analog_class='not_determined'` (SPR could not quantify; excluded from
+  numeric metrics). The A4A row on the PMI scaffold is a no-op control
+  (position 4 is already Ala) tagged `analog_class='control_redundant'`.
+
+For the Part-2 Spearman / ΔΔG-sign analysis, the usable mutational counts
+per receptor are: BH3 — thousands of multi-position variants per target,
+ample. p53 — 11 single-Ala substitutions on PMI + 10 on (17–28)p53 = 21
+single-residue point mutations per receptor; adding the 5+5 truncations
+(treated as a separate sub-analysis) gives 31, just clearing the ≥30
+threshold.
 
 ### Mutation injection: two designs
 
