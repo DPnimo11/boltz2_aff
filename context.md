@@ -437,6 +437,48 @@ single-residue point mutations per receptor; adding the 5+5 truncations
 (treated as a separate sub-analysis) gives 31, just clearing the ≥30
 threshold.
 
+### Boltz-2 cofolding inputs (2026-05-20)
+
+Two YAML generator scripts emit one cofolding input per (peptide, receptor)
+pair. Layout:
+
+    data/Boltz-2/peptides/<system>/<receptor>/input/<peptide_id>.yaml
+    data/Boltz-2/peptides/<system>/<receptor>/manifest.tsv
+    data/Boltz-2/peptides/bh3/peptide_index.tsv  # global peptide_id <-> seq map
+
+Each YAML follows the existing Boltz-2 convention used by ROCK1
+(`data/Boltz-2/ROCK1/{wt,mut,shuffled}/input/mol_NN.yaml`): two
+`protein` chains (`id: A` = receptor, `id: B` = peptide ligand) and
+`properties.affinity.binder: B`. Peptides are encoded as protein chains
+rather than as `ligand: smiles:` because they are too long for the
+small-molecule pose head.
+
+- `scripts/make_boltz_inputs_p53.py` — **72 YAMLs** = 36 unique
+  (scaffold, mutation_label) entries × 2 receptors (MDM2, MDMX).
+  Receptors are the Pazgier/Li synthetic constructs synMDM2 (MDM2
+  residues 25–109, Q00987) and synMDMX (MDMX 24–108, O15151). YAMLs
+  for the F19A/W23A "not_determined" rows and the PMI A4A no-op are
+  still emitted (Boltz predictions are useful even where the SPR Kd
+  is missing); their status is tagged in `manifest.tsv`.
+
+- `scripts/make_boltz_inputs_bh3.py` — **2067 YAMLs** = **689 unique
+  cross-target peptides × 3 receptors** (Bcl-xL, Mcl-1, Bfl-1).
+  Cross-target = appearing in the primary (non-replicate, non-pilot)
+  sort for *all three* receptors. Strictly the 1 nM main sort for
+  Bcl-xL/Mcl-1 and the 100 nM main sort for Bfl-1; the 100 nM Bcl-xL
+  main sort (x100.csv) is also pooled into the Bcl-xL leg, which is
+  why the intersection is 689 rather than the 537 quoted earlier from
+  x1.csv alone. Receptor constructs: Bcl-xL ΔTM 1–209 (Q07817), Mcl-1
+  binding-domain 172–327 (Q07820), Bfl-1 ΔTM 1–151 (Q16548). Replicate
+  and pilot rows remain in the upstream `measurements.tsv` for noise
+  estimation.
+
+The cofolding workload is **2139 Boltz-2 runs** combined (72 + 2067).
+This is the *starting* scope chosen 2026-05-20 to keep the first pass
+tractable — the BH3 main+replicate full set (~8.4 k) and the pilot
+screen (~18 k total) remain available behind the same generator script
+if scope expands later.
+
 ### Mutation injection: two designs
 
 The affinity head never reads sequence directly — it reads the structure
