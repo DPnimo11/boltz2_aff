@@ -63,11 +63,11 @@ Use `--embedding-keys pair_mean1 [pair_mean2 head1 head2]` to restrict.
 - Cross-validation groups rows by `target::ligand_id` so multiple Boltz
   variants for the same ligand cannot leak across folds.
 - Classification uses a `RandomForestClassifier(n_estimators=200,
-  class_weight="balanced", max_features="sqrt")`. An adaptive PCA step is
-  inserted before the RF when `n_samples < 5 × n_features` and
-  `n_pca = min(n_samples // 5, 30) ≥ 2`, preventing the forest from
-  memorising noise in high-dimensional, small-n regimes (e.g. ADRA2B n=13
-  → 2 PCA components; ROCK1 n=68 → 13 components).
+  class_weight="balanced", max_features="sqrt")` with no PCA step.
+  PCA was removed 2026-05-20 because it was too aggressive in small-n regimes
+  (ROCK1 n=68 compressed to 13 components, DRD3 n=32 to 6), causing AUC to
+  drop from ~0.908 to ~0.808 on ROCK1 vs the earlier LR baseline. RF's
+  own `max_features="sqrt"` already handles high-dim implicitly.
 - Regression uses `RidgeCV` over `np.logspace(-4, 4, 33)`. When
   `boltz_affinity_pred_value` is present in ≥80% of rows, the regressor
   trains on the **residual** `p_affinity − (−boltz_pred_value)` so it
@@ -90,6 +90,11 @@ Use `--embedding-keys pair_mean1 [pair_mean2 head1 head2]` to restrict.
 - `ulvsh_scores` — original ULVSH docking/physics columns (~25-28 columns).
 - `combined` — concatenation of the three above. For ROCK1 this is roughly
   1024 + 6 + 25 = 1055 features.
+- `ligand` — ECFP4 Morgan fingerprints (radius=2, 2048 bits, prefix `lig_ecfp4_`),
+  computed from `data/ULVSH/<target>/raw/poses.mol2` using RDKit.
+  No Boltz variant dimension — rows are per `(target, ligand_id)`.
+- `combined_ligand` — embeddings + Boltz scalars + ULVSH scores + fingerprints
+  (~3103 features for ROCK1).
 
 Regardless of feature set, whenever Boltz affinity JSONs exist they are also
 merged into `dataset.csv` as metadata columns so the raw-Boltz baseline AUC
@@ -131,6 +136,13 @@ Compare against scalar Boltz or ULVSH scores:
 python -m boltz2_aff.pipeline --feature-set boltz --out-dir runs/boltz_scalar
 python -m boltz2_aff.pipeline --feature-set ulvsh_scores --out-dir runs/ulvsh_scores
 python -m boltz2_aff.pipeline --feature-set combined --out-dir runs/combined
+```
+
+Ligand fingerprint (ECFP4) runs:
+
+```powershell
+python -m boltz2_aff.pipeline --targets ROCK1 --feature-set ligand --out-dir runs/rock1_ligand
+python -m boltz2_aff.pipeline --targets ROCK1 --feature-set combined_ligand --out-dir runs/rock1_combined_ligand
 ```
 
 Embedding-component sweep:
@@ -191,10 +203,50 @@ native Boltz-2 affinity predictor in aggregate. ROCK1 was a lucky target.
 - Regression is only meaningfully trainable for CASR (148), DRD4 (74), and
   ROCK1 (27); elsewhere there is too little numeric affinity data.
 
+## Morgan Fingerprint (ECFP4) Feature Block — Added 2026-05-20
+
+Added a `ligand` and `combined_ligand` feature set backed by 2048-bit ECFP4
+Morgan fingerprints (radius=2) computed from `data/ULVSH/<target>/raw/poses.mol2`
+using RDKit (`rdFingerprintGenerator.GetMorganGenerator`). Columns are prefixed
+`lig_ecfp4_`. Fingerprints have no Boltz variant dimension (same structure for
+wt/mut/shuffled rows of the same ligand).
+
+**Implementation** (`features.py`): `_mol2_blocks`, `_mol2_ligand_name`,
+`_mol2_to_fingerprint`, `discover_ligand_fingerprint_frame`. The rdkit import
+is wrapped in a try/except (`_RDKIT_AVAILABLE` flag); if rdkit is absent the
+function returns an empty DataFrame. Sanitization failures fall back to
+`sanitize=False` + manual `SanitizeMol`; remaining failures emit a warning and
+are skipped. `feature_columns()` extended with `"ligand"` and `"combined_ligand"`.
+
+**Pipeline**: `_merge_features()` accepts a new `fingerprints: pd.DataFrame`
+argument. For the `ligand` feature set it merges labels × fingerprints (no
+variant), sets `variant = "ulvsh"`. For `combined_ligand` it performs the
+standard combined merge and then left-merges fingerprints on
+`["target", "ligand_id"]`. Manifest logs `n_fingerprint_rows`.
+
+**ROCK1 results (2026-05-20)**:
+- `ligand` only (ECFP4): classification AUC 0.786, regression Pearson 0.542
+- `combined_ligand` (3103 features): classification AUC 0.799, regression
+  Pearson 0.686, screening AUC 0.838
+- Raw Boltz B2-C baseline: classification AUC 0.854, Pearson 0.710
+
+**Conclusion**: Fingerprints alone (0.786) are below both raw Boltz B2-C
+(0.854) and RF+embeddings (~0.808). Adding fingerprints to the combined set
+(0.799) still does not beat Boltz-2's scalar. This confirms the ligand-centrism
+hypothesis — Boltz-2's B2-C probability already encodes the ligand shape/
+pharmacophore information that ECFP4 would provide. No strong argument for using
+fingerprints as a primary feature set.
+
+**Issues**: rdkit 2026.3.2 required; `AllChem.GetMorganFingerprintAsBitVect` is
+deprecated in this version — use `rdFingerprintGenerator.GetMorganGenerator`
+instead.
+
 ## Possible Next Steps
 
 - **[done 2026-05-19]** Replace `LogisticRegression` with `RandomForestClassifier`
   + adaptive PCA in `modeling.py`; add residual regression mode.
+- **[done 2026-05-20]** Add ECFP4 Morgan fingerprint feature block (`ligand` /
+  `combined_ligand` feature sets); confirms ligand-centrism hypothesis.
 - Re-run the 10-target sweep with the new RF classifier to get updated headline
   numbers (`runs/sweep_embeddings_rf/`, `runs/sweep_combined_rf/`).
 - Add nested CV or a held-out test split so per-target combo selection is not

@@ -1,4 +1,4 @@
-"""Discover Boltz affinity embeddings and scalar affinity predictions."""
+"""Discover Boltz affinity embeddings, scalar affinity predictions, and ligand fingerprints."""
 
 from __future__ import annotations
 
@@ -10,9 +10,18 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+try:
+    from rdkit import Chem
+    from rdkit.Chem import rdFingerprintGenerator
+    from rdkit.DataStructs import ConvertToNumpyArray
+    _RDKIT_AVAILABLE = True
+except ImportError:
+    _RDKIT_AVAILABLE = False
 
 EMBEDDING_PREFIX = "affinity_embeddings_"
 EMBEDDING_KEY_CHOICES: tuple[str, ...] = ("pair_mean1", "head1", "pair_mean2", "head2")
+MORGAN_RADIUS = 2
+MORGAN_BITS = 2048
 
 
 def _normalize_embedding_keys(keys: Iterable[str] | None) -> set[str] | None:
@@ -181,12 +190,99 @@ def discover_boltz_scalar_frame(
     return pd.DataFrame(rows)
 
 
+def _mol2_blocks(mol2_text: str) -> list[str]:
+    """Split a multi-molecule mol2 string into individual molecule blocks."""
+    marker = "@<TRIPOS>MOLECULE"
+    parts = mol2_text.split(marker)
+    return [marker + part for part in parts[1:]]
+
+
+def _mol2_ligand_name(block: str) -> str:
+    """Extract the molecule name (first non-empty line after the MOLECULE header)."""
+    lines = block.splitlines()
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("@"):
+            return stripped
+    return ""
+
+
+def _mol2_to_fingerprint(block: str) -> tuple[str, np.ndarray] | None:
+    """Parse one mol2 block and return (ligand_id, ECFP4 bit array) or None on failure."""
+    if not _RDKIT_AVAILABLE:
+        return None
+    name = _mol2_ligand_name(block)
+    mol = Chem.MolFromMol2Block(block, sanitize=True, removeHs=True)
+    if mol is None:
+        mol = Chem.MolFromMol2Block(block, sanitize=False, removeHs=True)
+        if mol is None:
+            return None
+        try:
+            Chem.SanitizeMol(mol)
+        except Exception:
+            return None
+    gen = rdFingerprintGenerator.GetMorganGenerator(radius=MORGAN_RADIUS, fpSize=MORGAN_BITS)
+    fp = gen.GetFingerprint(mol)
+    arr = np.zeros(MORGAN_BITS, dtype=np.uint8)
+    ConvertToNumpyArray(fp, arr)
+    return name, arr
+
+
+def discover_ligand_fingerprint_frame(
+    ulvsh_root: Path,
+    targets: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """Compute ECFP4 Morgan fingerprints from ULVSH poses.mol2 files.
+
+    Returns a DataFrame with columns target, ligand_id, lig_ecfp4_0000 … lig_ecfp4_2047.
+    Returns an empty DataFrame if rdkit is unavailable or no mol2 files are found.
+    """
+    if not _RDKIT_AVAILABLE:
+        return pd.DataFrame()
+
+    target_filter = _target_filter(targets)
+    rows: list[dict[str, object]] = []
+
+    for mol2_path in sorted(ulvsh_root.rglob("poses.mol2")):
+        # Expected layout: ulvsh_root/<target>/raw/poses.mol2
+        target = mol2_path.parent.parent.name
+        if target_filter and target.upper() not in target_filter:
+            continue
+        mol2_text = mol2_path.read_text(encoding="utf-8", errors="replace")
+        n_ok = n_fail = 0
+        for block in _mol2_blocks(mol2_text):
+            result = _mol2_to_fingerprint(block)
+            if result is None:
+                n_fail += 1
+                continue
+            ligand_id, fp_arr = result
+            if not ligand_id:
+                n_fail += 1
+                continue
+            row: dict[str, object] = {"target": target, "ligand_id": ligand_id}
+            for i, bit in enumerate(fp_arr):
+                row[f"lig_ecfp4_{i:04d}"] = int(bit)
+            rows.append(row)
+            n_ok += 1
+        if n_fail:
+            import warnings
+            warnings.warn(
+                f"discover_ligand_fingerprint_frame: {target} — {n_fail} mol2 blocks failed to parse"
+                f" ({n_ok} ok)",
+                stacklevel=2,
+            )
+
+    return pd.DataFrame(rows)
+
+
 def feature_columns(frame: pd.DataFrame, feature_set: str) -> list[str]:
     prefixes_by_set = {
         "embeddings": ("emb_",),
         "boltz": ("boltz_",),
         "ulvsh_scores": ("score_",),
         "combined": ("emb_", "boltz_", "score_"),
+        "ligand": ("lig_",),
+        "combined_ligand": ("emb_", "boltz_", "score_", "lig_"),
     }
     prefixes = prefixes_by_set[feature_set]
     columns = [column for column in frame.columns if column.startswith(prefixes)]

@@ -14,6 +14,7 @@ from boltz2_aff.features import (
     EMBEDDING_KEY_CHOICES,
     discover_boltz_scalar_frame,
     discover_embedding_frame,
+    discover_ligand_fingerprint_frame,
     feature_columns,
 )
 from boltz2_aff.modeling import boltz_baseline_metrics, train_classifier, train_regressor
@@ -37,7 +38,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature-set",
         default="embeddings",
-        choices=["embeddings", "boltz", "ulvsh_scores", "combined"],
+        choices=["embeddings", "boltz", "ulvsh_scores", "combined", "ligand", "combined_ligand"],
     )
     parser.add_argument(
         "--embedding-keys",
@@ -64,10 +65,12 @@ def _merge_features(
     labels: pd.DataFrame,
     embeddings: pd.DataFrame,
     boltz_scalars: pd.DataFrame,
+    fingerprints: pd.DataFrame,
     feature_set: str,
 ) -> pd.DataFrame:
-    needs_embeddings = feature_set in {"embeddings", "combined"}
-    needs_boltz = feature_set in {"boltz", "combined"}
+    needs_embeddings = feature_set in {"embeddings", "combined", "combined_ligand"}
+    needs_boltz = feature_set in {"boltz", "combined", "combined_ligand"}
+    needs_ligand = feature_set in {"ligand", "combined_ligand"}
 
     if needs_embeddings:
         if embeddings.empty:
@@ -77,10 +80,16 @@ def _merge_features(
         if boltz_scalars.empty:
             raise ValueError("no Boltz affinity JSON files were found for the requested selection")
         frame = labels.merge(boltz_scalars, on=["target", "ligand_id"], how="inner")
+    elif needs_ligand:
+        if fingerprints.empty:
+            raise ValueError("no poses.mol2 fingerprint files were found (is rdkit installed?)")
+        frame = labels.merge(fingerprints, on=["target", "ligand_id"], how="inner")
+        frame["variant"] = "ulvsh"
     else:
         frame = labels.copy()
         frame["variant"] = "ulvsh"
 
+    # Attach Boltz scalars as metadata when primary feature set is embeddings
     have_scalars_in_frame = any(c.startswith("boltz_") for c in frame.columns)
     if not boltz_scalars.empty and needs_embeddings and not have_scalars_in_frame:
         scalar_columns = [
@@ -93,6 +102,10 @@ def _merge_features(
             on=["target", "variant", "ligand_id"],
             how="left",
         )
+
+    # Attach fingerprints when combined_ligand is the feature set and they're not yet in frame
+    if needs_ligand and not fingerprints.empty and not any(c.startswith("lig_") for c in frame.columns):
+        frame = frame.merge(fingerprints, on=["target", "ligand_id"], how="left")
 
     return frame
 
@@ -119,6 +132,7 @@ def _write_manifest(
     labels: pd.DataFrame,
     embeddings: pd.DataFrame,
     boltz_scalars: pd.DataFrame,
+    fingerprints: pd.DataFrame,
     frame: pd.DataFrame,
     selected_features: list[str],
     embedding_roots: list[Path],
@@ -137,6 +151,7 @@ def _write_manifest(
         "n_label_rows": int(len(labels)),
         "n_embedding_rows": int(len(embeddings)),
         "n_boltz_scalar_rows": int(len(boltz_scalars)),
+        "n_fingerprint_rows": int(len(fingerprints)),
         "n_modeling_rows": int(len(frame)),
         "n_features": int(len(selected_features)),
         "target_counts": frame.groupby("target").size().astype(int).to_dict(),
@@ -158,7 +173,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         embedding_roots, args.targets, args.variants, embedding_keys=args.embedding_keys
     )
     boltz_scalars = discover_boltz_scalar_frame(args.boltz_output_root, args.targets, args.variants)
-    frame = _merge_features(labels, embeddings, boltz_scalars, args.feature_set)
+    fingerprints = discover_ligand_fingerprint_frame(args.ulvsh_root, args.targets)
+    frame = _merge_features(labels, embeddings, boltz_scalars, fingerprints, args.feature_set)
     frame["group_id"] = frame["target"].astype(str) + "::" + frame["ligand_id"].astype(str)
 
     selected_features = feature_columns(frame, args.feature_set)
@@ -211,6 +227,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         labels,
         embeddings,
         boltz_scalars,
+        fingerprints,
         frame,
         selected_features,
         embedding_roots,

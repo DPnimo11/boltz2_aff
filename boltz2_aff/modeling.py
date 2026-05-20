@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
 from sklearn.base import clone
-from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import RidgeCV
@@ -151,7 +150,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(serializable, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def _build_classifier_pipeline(n_samples: int, n_features: int, random_state: int) -> Pipeline:
+def _build_classifier_pipeline(random_state: int) -> Pipeline:
     classifier = RandomForestClassifier(
         n_estimators=200,
         class_weight="balanced",
@@ -159,13 +158,7 @@ def _build_classifier_pipeline(n_samples: int, n_features: int, random_state: in
         random_state=random_state,
         n_jobs=-1,
     )
-    steps: list = [("imputer", _imputer()), ("scaler", StandardScaler())]
-    # PCA when n << p to prevent RF from memorising noise dimensions
-    n_pca = min(n_samples // 5, 30)
-    if n_pca >= 2 and n_features > n_pca:
-        steps.append(("pca", PCA(n_components=n_pca)))
-    steps.append(("model", classifier))
-    return Pipeline(steps)
+    return Pipeline([("imputer", _imputer()), ("scaler", StandardScaler()), ("model", classifier)])
 
 
 def train_classifier(
@@ -182,7 +175,7 @@ def train_classifier(
 
     x = _as_feature_matrix(rows, feature_columns)
     groups = rows["group_id"].astype(str).to_numpy()
-    model = _build_classifier_pipeline(len(rows), len(feature_columns), random_state)
+    model = _build_classifier_pipeline(random_state)
 
     metrics: dict[str, Any] = {
         "status": "fit",

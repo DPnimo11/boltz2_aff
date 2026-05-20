@@ -11,9 +11,13 @@ dependencies = [
   "joblib",
   "numpy",
   "pandas",
+  "rdkit>=2026.3.2",
   "scikit-learn",
   "scipy",
 ]
+
+[tool.setuptools.packages.find]
+include = ["boltz2_aff*"]
 
 [project.scripts]
 boltz2-affinity = "boltz2_aff.pipeline:main"
