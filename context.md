@@ -95,12 +95,6 @@ Use `--embedding-keys pair_mean1 [pair_mean2 head1 head2]` to restrict.
 - `ulvsh_scores` — original ULVSH docking/physics columns (~25-28 columns).
 - `combined` — concatenation of the three above. For ROCK1 this is roughly
   1024 + 6 + 25 = 1055 features.
-- `ligand` — ECFP4 Morgan fingerprints (radius=2, 2048 bits, prefix `lig_ecfp4_`),
-  computed from `data/ULVSH/<target>/raw/poses.mol2` using RDKit.
-  No Boltz variant dimension — rows are per `(target, ligand_id)`.
-- `combined_ligand` — embeddings + Boltz scalars + ULVSH scores + fingerprints
-  (~3103 features for ROCK1).
-
 Regardless of feature set, whenever Boltz affinity JSONs exist they are also
 merged into `dataset.csv` as metadata columns so the raw-Boltz baseline AUC
 can be computed alongside the model.
@@ -143,12 +137,6 @@ python -m boltz2_aff.pipeline --feature-set ulvsh_scores --out-dir runs/ulvsh_sc
 python -m boltz2_aff.pipeline --feature-set combined --out-dir runs/combined
 ```
 
-Ligand fingerprint (ECFP4) runs:
-
-```powershell
-python -m boltz2_aff.pipeline --targets ROCK1 --feature-set ligand --out-dir runs/rock1_ligand
-python -m boltz2_aff.pipeline --targets ROCK1 --feature-set combined_ligand --out-dir runs/rock1_combined_ligand
-```
 
 Embedding-component sweep:
 
@@ -222,8 +210,39 @@ Regression is effectively broken outside ROCK1:
 - 4/10 targets (CNR1, DRD3, SC6A4, SGMR2) have **zero** uncensored numeric
   affinity rows — regression is skipped entirely.
 - Of the 6 that fit, only ROCK1 (n=27) gives a strong positive Pearson
-  (~0.70). CASR (n=148) is weakly positive (~0.50); CNR2/MTR1A/DRD4/ADRA2B
-  are near-zero or negative.
+  (~0.70). CASR (n=148) is weakly positive (~0.50); DRD4 (~0.10) and
+  ADRA2B/MTR1A/CNR2 are near-zero or actively negative.
+
+**Why regression is hard here:** ULVSH only provides numeric Ki/IC50/Kd for
+confirmed actives — inactives have censored (">10µM") or percent-inhibition
+measurements. So regression trains on a narrow affinity window among
+structurally similar actives, with no negative training signal. Classification
+just needs to rank actives above inactives; regression must predict exact
+affinities within 2-3 log units. Much harder.
+
+**Per-target regression picture (combined feature set):**
+- ROCK1: Pearson ~0.70, screening AUC ~0.84 — solid; residual mode helps.
+- CASR: Pearson ~0.50 — modest but positive; p>>n (1055 features, 148 rows)
+  is the main bottleneck.
+- DRD4: Pearson ~0.07-0.11 — essentially useless; likely assay heterogeneity
+  (Ki/IC50/Kd mixed from different experimental conditions).
+- CNR2: *negative* Pearson — anti-correlated; small numeric subset with a
+  structural confound (tight binders cluster in a region the embedding ranks
+  low).
+- ADRA2B, MTR1A: too noisy/negative to interpret.
+
+**Screening AUC is the meaningful regression metric.** The `regression.cv_roc_auc`
+(train on actives-only rows per fold, predict all test rows, AUC vs `active_bool`)
+mirrors how the Rognan paper evaluates Boltz-2 scalars. ROCK1 reaches 0.84.
+Pearson is reported but secondary.
+
+**Options if regression improvement is desired:**
+1. Focus on CASR only — enough data; try explicit PCA→Ridge to reduce p>>n.
+2. Tobit regression for censored targets — treat ">10µM" as a right-censored
+   observation (scikit-survival or custom likelihood). Would recover CNR1, DRD3,
+   SC6A4, SGMR2. Non-trivial, not yet implemented.
+3. Frame regression as a side result for ROCK1/CASR only; classification (AUC)
+   is the headline, matching the Rognan paper's framing.
 
 No universal best embedding component across targets, but `pair_mean1` is a
 reasonable fixed choice and wins on ROCK1, DRD3, CASR, CNR1 as headline cases.
@@ -239,46 +258,19 @@ reasonable fixed choice and wins on ROCK1, DRD3, CASR, CNR1 as headline cases.
 - ULVSH does not provide numeric IC50/Ki for inactives (censored or
   percent-style), so the regression subset is all-active. Hence the screening
   AUC implementation that predicts on inactives despite training on actives.
-- Regression is only meaningfully trainable for CASR (148), DRD4 (74), and
-  ROCK1 (27); elsewhere there is too little numeric affinity data.
+- Regression is only meaningful for ROCK1 (n=27, Pearson ~0.70) and CASR
+  (n=148, Pearson ~0.50). DRD4 (n=74) gives Pearson ~0.10 — likely assay
+  heterogeneity. CNR2 is anti-correlated. Use `regression.cv_roc_auc` (screening
+  AUC) as the primary regression metric, not Pearson.
 
-## Morgan Fingerprint (ECFP4) Feature Block — Added 2026-05-20
+## Morgan Fingerprint (ECFP4) Feature Block — Added and Removed 2026-05-20
 
-Added a `ligand` and `combined_ligand` feature set backed by 2048-bit ECFP4
-Morgan fingerprints (radius=2) computed from `data/ULVSH/<target>/raw/poses.mol2`
-using RDKit (`rdFingerprintGenerator.GetMorganGenerator`). Columns are prefixed
-`lig_ecfp4_`. Fingerprints have no Boltz variant dimension (same structure for
-wt/mut/shuffled rows of the same ligand).
-
-**Implementation** (`features.py`): `_mol2_blocks`, `_mol2_ligand_name`,
-`_mol2_to_fingerprint`, `discover_ligand_fingerprint_frame`. The rdkit import
-is wrapped in a try/except (`_RDKIT_AVAILABLE` flag); if rdkit is absent the
-function returns an empty DataFrame. Sanitization failures fall back to
-`sanitize=False` + manual `SanitizeMol`; remaining failures emit a warning and
-are skipped. `feature_columns()` extended with `"ligand"` and `"combined_ligand"`.
-
-**Pipeline**: `_merge_features()` accepts a new `fingerprints: pd.DataFrame`
-argument. For the `ligand` feature set it merges labels × fingerprints (no
-variant), sets `variant = "ulvsh"`. For `combined_ligand` it performs the
-standard combined merge and then left-merges fingerprints on
-`["target", "ligand_id"]`. Manifest logs `n_fingerprint_rows`.
-
-**ROCK1 results (2026-05-20)**:
-- `ligand` only (ECFP4): classification AUC 0.786, regression Pearson 0.542
-- `combined_ligand` (3103 features): classification AUC 0.799, regression
-  Pearson 0.686, screening AUC 0.838
-- Raw Boltz B2-C baseline: classification AUC 0.854, Pearson 0.710
-
-**Conclusion**: Fingerprints alone (0.786) are below both raw Boltz B2-C
-(0.854) and RF+embeddings (~0.808). Adding fingerprints to the combined set
-(0.799) still does not beat Boltz-2's scalar. This confirms the ligand-centrism
-hypothesis — Boltz-2's B2-C probability already encodes the ligand shape/
-pharmacophore information that ECFP4 would provide. No strong argument for using
-fingerprints as a primary feature set.
-
-**Issues**: rdkit 2026.3.2 required; `AllChem.GetMorganFingerprintAsBitVect` is
-deprecated in this version — use `rdFingerprintGenerator.GetMorganGenerator`
-instead.
+ECFP4 fingerprints (radius=2, 2048-bit, from `poses.mol2` via RDKit) were
+implemented as `ligand` and `combined_ligand` feature sets and subsequently
+**removed**. Results on ROCK1: `ligand` only AUC 0.786, `combined_ligand` 0.799
+— both below `combined` without fingerprints (0.909) and raw B2-C (0.854).
+B2-C already encodes the ligand pharmacophore that ECFP4 captures; adding 2048
+noise dimensions only hurts. rdkit dependency also removed from `pyproject.toml`.
 
 ## Possible Next Steps
 
@@ -295,9 +287,11 @@ instead.
   biased — adaptive selection adds further value (especially CNR2: 0.636→0.782).
 - Add nested CV or a held-out test split so per-target combo selection is not
   optimistically biased; re-evaluate the classification "wins" honestly.
-- Focus regression effort on CASR/DRD4/ROCK1 only — the rest lack numeric
-  affinity data. Consider dropping regression from the headline entirely and
-  framing the project as binary classification (as the paper does).
+- Drop regression from the headline; report only as a side result for ROCK1
+  (Pearson ~0.70, screening AUC ~0.84) and CASR (Pearson ~0.50). The training
+  set is all-actives so Pearson is range-restricted; the screening AUC
+  (`regression.cv_roc_auc`) is the meaningful metric. If regression is expanded,
+  Tobit regression for censored inactives is the principled path.
 - Try PLS regression or PCA→ridge to handle p≫n for the `head` components
   rather than discarding them.
 - Investigate why CASR/DRD3 embeddings beat raw Boltz so decisively but

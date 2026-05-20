@@ -11,7 +11,6 @@ dependencies = [
   "joblib",
   "numpy",
   "pandas",
-  "rdkit>=2026.3.2",
   "scikit-learn",
   "scipy",
 ]
