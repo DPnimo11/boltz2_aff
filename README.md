@@ -185,6 +185,36 @@ peptide against one receptor:
 Evaluation for Part 2 is within-series Spearman and ΔΔG sign agreement vs
 wild-type, not pooled AUC. See `context.md` "Planned Part 2".
 
+## Part 2 First Results (2026-05-22)
+
+Embeddings for all 2139 cofolded peptide complexes are stored under
+`targets/peptides/<system>__<receptor>/affinity_<peptide_id>.npz` (BH3 689×3
+receptors + p53 36×2 receptors). Regenerate the label manifests/index, then run:
+
+```powershell
+python scripts/make_boltz_inputs_bh3.py        # (re)writes peptide_index + manifests
+python scripts/make_boltz_inputs_p53.py
+python scripts/analyze_peptide_embeddings.py    # label-free sensitivity probe
+python scripts/part2_analysis.py                # within-series Spearman / ΔΔG-magnitude
+```
+
+Outputs land in `runs/peptide_embeddings/`. First findings — **embedding-model
+arm only** (no raw-Boltz scalar baseline yet; peptide affinity JSONs not
+extracted):
+
+- **BH3** (n=689/receptor): a cross-validated regressor on the embeddings ranks
+  the mutational series with Spearman **0.66** (Bcl-xL), **0.77** (Mcl-1),
+  **0.79** (Bfl-1), all p ≤ 1e-86. Weak spot: PUMA-background variants on
+  Bcl-xL (0.30).
+- **p53**: too few point mutants for a supervised model, so the model-free
+  probe is the headline — embedding shift-from-WT tracks measured |ΔΔG| with
+  Spearman **0.80–0.92** (PMI) and **0.65–0.72** (p53 17–28).
+
+The mutational signal is present in the representation feeding Boltz-2's scalar
+affinity heads — contrasting with the Rognan finding that the raw scalars were
+mutation-insensitive. See `context.md` "Part 2 first results" for the full
+breakdown, caveats, and open items.
+
 ## Notes for Future Work
 
 See `context.md` for AI-facing project context, the LRIP feature-set plan,

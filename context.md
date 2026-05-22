@@ -22,6 +22,10 @@ across 10 targets of 0.763.
     `_screening_auc`, `boltz_baseline_metrics`.
   - `pipeline.py` — CLI driver.
 - `scripts/sweep_embedding_keys.py` — embedding-component sweep harness.
+- `scripts/analyze_peptide_embeddings.py` — label-free Part-2 diagnostic
+  (embedding shift under mutation; QC of the extracted set).
+- `scripts/part2_analysis.py` — Part-2 within-series Spearman / ΔΔG-magnitude
+  analysis (joins peptide embeddings to measured affinity via the manifests).
 
 ## Current Data Layout
 
@@ -41,6 +45,13 @@ across 10 targets of 0.763.
   mutational tables are written to `data/peptides/<system>/` by
   `scripts/parse_<system>_mutants.py`. See "Planned Part 2" below for the
   per-system source-of-truth files.
+  Extracted Boltz-2 affinity embeddings for the cofolded peptide complexes are
+  filed under `targets/peptides/<system>__<receptor>/affinity_<peptide_id>.npz`
+  (2139 files: BH3 689 peptides × 3 receptors + p53 36 entries × 2 receptors).
+  These use a **newer export schema** than Part 1 (`pair_mean` 128, `head_ens1`
+  384, `head_ens2` 384, `head_mean` 384, plus `peptide_id`/`target` metadata)
+  and are deliberately *not* discovered by the Part-1 pipeline, which globs the
+  `affinity_embeddings_*.npz` prefix (these are `affinity_*.npz`).
 
 ## Embedding Provenance
 
@@ -503,3 +514,49 @@ Build B only if A shows the insensitivity.
 **Architecture constraint:** keep pose generation and affinity scoring as
 separable pipeline steps so the fixed-template path (Option B) can be added
 later without a rewrite. Do not couple them.
+
+### Part 2 first results (2026-05-22)
+
+Embeddings for all 2139 cofolded peptide complexes were extracted (Option A,
+re-cofold per variant) and filed under `targets/peptides/<system>__<receptor>/`.
+Two analyses were run; outputs in `runs/peptide_embeddings/`. Both use
+`head_mean` (the ensemble-averaged representation immediately before the scalar
+affinity heads).
+
+**Embedding sensitivity probe** (`scripts/analyze_peptide_embeddings.py` →
+`embedding_sensitivity.json`) — label-free. All embeddings are unique (QC: no
+degenerate extraction). On p53 (WT-resolvable ids) the embedding *does* move
+under mutation and the largest shifts land on the known anchor residues — W23A
+(by far the biggest) and F19A on the p53(17–28) helix, W7A then F3A on PMI. But
+the magnitude is small: cosine-to-WT stays ≥0.99 and the mean shift is only
+~2–3.5% of ‖WT‖ — consistent with the Rognan "insensitivity" concern.
+
+**Part 2 analysis** (`scripts/part2_analysis.py` → `part2_results.json`).
+NOTE: this is the *embedding-model* arm only — no peptide affinity JSONs were
+extracted, so there is **no raw-Boltz scalar baseline yet** (the direct Rognan
+comparison still needs the JSONs).
+
+- **BH3** — supervised CV (KFold-5) Spearman of embeddings → `apparent_value`
+  (higher = tighter), n=689/receptor: Bcl-xL 0.657, Mcl-1 0.766, Bfl-1 0.791
+  (all p ≤ 1e-86, Pearson 0.62/0.82/0.78). Within-background: Bim 0.68/0.80/0.79;
+  PUMA 0.30/0.63/0.79 — PUMA-background on Bcl-xL (0.295) is the one weak case.
+- **p53** — only ~10–11 point mutants per scaffold per receptor, too few for a
+  384-dim supervised model, so the headline is the *model-free magnitude probe*:
+  Spearman(embedding shift-from-WT, measured |ΔΔG|). PMI 0.80–0.92,
+  p53(17–28) 0.65–0.72 (point only); including truncations 0.75–0.85. A LOO-Ridge
+  Spearman (0.67–0.94) and a crude `sign_agreement_vs_median` are reported in the
+  JSON as n-limited secondary numbers, not relied upon.
+
+**Takeaway:** the mutational signal is clearly present in the representation that
+feeds Boltz-2's scalar affinity heads, for both systems — contrasting with the
+Rognan finding that the raw scalars were largely mutation-insensitive. The open
+question is whether Boltz-2's *own scalar output* preserves it.
+
+**Open Part-2 items:**
+1. Extract peptide affinity JSONs to add the raw-Boltz scalar baseline (B2-A /
+   B2-C) — the apples-to-apples Rognan comparison; the embedding-model arm alone
+   cannot make that claim.
+2. Replace `sign_agreement_vs_median` with a proper ΔΔG-sign metric anchored to
+   a held-out WT reference.
+3. BH3 CV uses random KFold over distinct sequences; the within-background
+   Spearman is the cleaner within-series read. Consider grouped CV by background.
