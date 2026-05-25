@@ -538,14 +538,21 @@ comparison still needs the JSONs).
 
 - **BH3** — supervised CV (KFold-5) Spearman of embeddings → `apparent_value`
   (higher = tighter), n=689/receptor: Bcl-xL 0.657, Mcl-1 0.766, Bfl-1 0.791
-  (all p ≤ 1e-86, Pearson 0.62/0.82/0.78). Within-background: Bim 0.68/0.80/0.79;
-  PUMA 0.30/0.63/0.79 — PUMA-background on Bcl-xL (0.295) is the one weak case.
+  (all p ≤ 1e-86, Pearson 0.62/0.82/0.78). **Within-background CV** (refined
+  2026-05-25 — a model CV'd *only* within Bim or PUMA, the honest within-series
+  read): Bim 0.69/0.78/0.77, PUMA 0.27/0.66/0.75. These track the pooled split
+  closely, so the ranking borrows no cross-background signal; PUMA-background on
+  Bcl-xL (0.27) is the one weak case, now confirmed robust.
 - **p53** — only ~10–11 point mutants per scaffold per receptor, too few for a
   384-dim supervised model, so the headline is the *model-free magnitude probe*:
   Spearman(embedding shift-from-WT, measured |ΔΔG|). PMI 0.80–0.92,
-  p53(17–28) 0.65–0.72 (point only); including truncations 0.75–0.85. A LOO-Ridge
-  Spearman (0.67–0.94) and a crude `sign_agreement_vs_median` are reported in the
-  JSON as n-limited secondary numbers, not relied upon.
+  p53(17–28) 0.65–0.72 (point only); including truncations 0.75–0.85. Secondary,
+  n-limited: LOO-Ridge Spearman 0.66–0.95, and a **WT-anchored ΔΔG-sign
+  agreement** (refined 2026-05-25: predicted `pKd_WT(held-out) − pKd_mut` vs
+  measured ΔΔG). Overall sign agreement is 0.64–0.87, but on the *clear effects*
+  (|ΔΔG| ≥ 1 kcal/mol) it is **1.00 in 6/8 series** — every clearly
+  (de)stabilizing mutation gets the right direction; disagreements sit on
+  near-neutral mutations within assay noise.
 
 **Takeaway:** the mutational signal is clearly present in the representation that
 feeds Boltz-2's scalar affinity heads, for both systems — contrasting with the
@@ -553,10 +560,13 @@ Rognan finding that the raw scalars were largely mutation-insensitive. The open
 question is whether Boltz-2's *own scalar output* preserves it.
 
 **Open Part-2 items:**
-1. Extract peptide affinity JSONs to add the raw-Boltz scalar baseline (B2-A /
-   B2-C) — the apples-to-apples Rognan comparison; the embedding-model arm alone
-   cannot make that claim.
-2. Replace `sign_agreement_vs_median` with a proper ΔΔG-sign metric anchored to
-   a held-out WT reference.
-3. BH3 CV uses random KFold over distinct sequences; the within-background
-   Spearman is the cleaner within-series read. Consider grouped CV by background.
+1. **(top priority — the remaining gap)** Extract peptide affinity JSONs to add
+   the raw-Boltz scalar baseline (B2-A / B2-C) — the apples-to-apples Rognan
+   comparison; the embedding-model arm alone cannot make that claim.
+
+- **[done 2026-05-25]** WT-anchored ΔΔG-sign metric (replaced the crude
+  `sign_agreement_vs_median`); sign agreement = 1.00 on |ΔΔG| ≥ 1 kcal/mol in
+  6/8 series. In `scripts/part2_analysis.py` (`analyze_p53`).
+- **[done 2026-05-25]** BH3 within-background CV (model CV'd within each Bim/PUMA
+  background); within-series ranking holds, PUMA-on-Bcl-xL stays the weak case.
+  In `scripts/part2_analysis.py` (`analyze_bh3`).

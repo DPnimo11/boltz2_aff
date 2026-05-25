@@ -204,11 +204,14 @@ extracted):
 
 - **BH3** (n=689/receptor): a cross-validated regressor on the embeddings ranks
   the mutational series with Spearman **0.66** (Bcl-xL), **0.77** (Mcl-1),
-  **0.79** (Bfl-1), all p ≤ 1e-86. Weak spot: PUMA-background variants on
-  Bcl-xL (0.30).
+  **0.79** (Bfl-1), all p ≤ 1e-86. Holds under within-background CV (Bim
+  0.69/0.78/0.77, PUMA 0.27/0.66/0.75). Weak spot: PUMA-background variants on
+  Bcl-xL (0.27).
 - **p53**: too few point mutants for a supervised model, so the model-free
   probe is the headline — embedding shift-from-WT tracks measured |ΔΔG| with
-  Spearman **0.80–0.92** (PMI) and **0.65–0.72** (p53 17–28).
+  Spearman **0.80–0.92** (PMI) and **0.65–0.72** (p53 17–28). A WT-anchored
+  ΔΔG-sign check gets the direction right on **every clear effect**
+  (|ΔΔG| ≥ 1 kcal/mol; sign agreement 1.00 in 6/8 series).
 
 The mutational signal is present in the representation feeding Boltz-2's scalar
 affinity heads — contrasting with the Rognan finding that the raw scalars were
