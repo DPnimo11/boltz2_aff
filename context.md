@@ -26,6 +26,8 @@ across 10 targets of 0.763.
   (embedding shift under mutation; QC of the extracted set).
 - `scripts/part2_analysis.py` — Part-2 within-series Spearman / ΔΔG-magnitude
   analysis (joins peptide embeddings to measured affinity via the manifests).
+- `scripts/part2_extras.py` — Part-2 follow-ups needing no new data: embedding-key
+  sweep, BH3 replicate noise ceiling, and BH3 cross-target selectivity.
 
 ## Current Data Layout
 
@@ -570,3 +572,31 @@ question is whether Boltz-2's *own scalar output* preserves it.
 - **[done 2026-05-25]** BH3 within-background CV (model CV'd within each Bim/PUMA
   background); within-series ranking holds, PUMA-on-Bcl-xL stays the weak case.
   In `scripts/part2_analysis.py` (`analyze_bh3`).
+
+### Part 2 extras (2026-05-25)
+
+`scripts/part2_extras.py` → `runs/peptide_embeddings/part2_extras.json`. Three
+follow-ups that need no new data:
+
+- **Embedding-key sweep** — no dominant view (BH3 CV Spearman 0.64–0.80, p53
+  magnitude probe 0.69–0.83 across `pair_mean`/`head_ens1`/`head_ens2`/`head_mean`
+  /`pair_mean+head_mean`). `head_mean` and the `pair_mean+head_mean` concat are
+  consistently among the best, so the `head_mean` default is fine; best-per-target
+  varies (e.g. `pair_mean` 0.668 on Bcl-xL, `head_ens1` 0.830 on p53/MDM2),
+  echoing Part 1's "no universal best component".
+- **Replicate noise ceiling (BH3)** — test-retest Spearman between the main and
+  replicate SORTCERY sorts, **computed within concentration** (pooling Bcl-xL's
+  1 nM x1 and 100 nM x100 sorts had deflated its ceiling to 0.505 — a confound).
+  Concentration-matched: Bcl-xL 0.831 (@1 nM), Mcl-1 0.955 (@1 nM), Bfl-1 0.924
+  (@100 nM). The head_mean CV model (0.657/0.766/0.791) recovers **~79/80/86 %**
+  of the achievable ranking signal — labels are highly reproducible, so the
+  ~15–20 % gap is real model headroom, not label noise (Bcl-xL is both the
+  hardest target and has the lowest ceiling).
+- **Cross-target selectivity (BH3)** — the 689 peptides are folded against all
+  three receptors, so predicted vs measured *receptor preference* can be scored.
+  Affinities are percentile-rank-normalised within each receptor first (SORTCERY
+  values are only internally consistent per target), then selectivity =
+  percentile[r1] − percentile[r2]. Spearman of predicted vs measured selectivity:
+  Mcl-1/Bcl-xL 0.766, Bfl-1/Bcl-xL 0.728, Mcl-1/Bfl-1 0.670 (all p ≤ 1e-91,
+  n=689). The embeddings capture Bcl-2-family **selectivity**, not just
+  per-receptor affinity — the headline strength of the BH3 system.

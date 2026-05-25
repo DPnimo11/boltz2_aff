@@ -196,6 +196,7 @@ python scripts/make_boltz_inputs_bh3.py        # (re)writes peptide_index + mani
 python scripts/make_boltz_inputs_p53.py
 python scripts/analyze_peptide_embeddings.py    # label-free sensitivity probe
 python scripts/part2_analysis.py                # within-series Spearman / ΔΔG-magnitude
+python scripts/part2_extras.py                  # key sweep, noise ceiling, selectivity
 ```
 
 Outputs land in `runs/peptide_embeddings/`. First findings — **embedding-model
@@ -217,6 +218,12 @@ The mutational signal is present in the representation feeding Boltz-2's scalar
 affinity heads — contrasting with the Rognan finding that the raw scalars were
 mutation-insensitive. See `context.md` "Part 2 first results" for the full
 breakdown, caveats, and open items.
+
+Follow-ups (`part2_extras.py`): against the SORTCERY **replicate noise ceiling**
+(0.83/0.96/0.92 for Bcl-xL/Mcl-1/Bfl-1) the model recovers ~79–86% of the
+achievable ranking signal; and the embeddings capture Bcl-2-family
+**selectivity** (predicted vs measured receptor preference, Spearman 0.67–0.77,
+n=689). See `context.md` "Part 2 extras".
 
 ## Notes for Future Work
 
