@@ -197,7 +197,14 @@ python scripts/make_boltz_inputs_p53.py
 python scripts/analyze_peptide_embeddings.py    # label-free sensitivity probe
 python scripts/part2_analysis.py                # within-series Spearman / ΔΔG-magnitude
 python scripts/part2_extras.py                  # key sweep, noise ceiling, selectivity
+python scripts/part2_raw_boltz_baseline.py      # raw Boltz-2 scalar baseline (needs cofolds)
 ```
+
+The raw-Boltz scalar baseline (B2-A / B2-C) is the direct Rognan comparison —
+does Boltz-2's *own* scalar output track the mutations? Its analysis is built
+and verified; it computes once Boltz-2 has been run over the 2139 peptide input
+YAMLs (`data/Boltz-2/peptides/*/*/input/`) so the affinity JSONs exist. Until
+then the script reports what is missing.
 
 Outputs land in `runs/peptide_embeddings/`. First findings — **embedding-model
 arm only** (no raw-Boltz scalar baseline yet; peptide affinity JSONs not

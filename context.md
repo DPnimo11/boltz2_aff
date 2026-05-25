@@ -28,6 +28,9 @@ across 10 targets of 0.763.
   analysis (joins peptide embeddings to measured affinity via the manifests).
 - `scripts/part2_extras.py` — Part-2 follow-ups needing no new data: embedding-key
   sweep, BH3 replicate noise ceiling, and BH3 cross-target selectivity.
+- `scripts/part2_raw_boltz_baseline.py` — Part-2 raw Boltz-2 scalar baseline
+  (B2-A / B2-C within-series Spearman + ΔΔG-sign, the Rognan comparison). Built
+  and verified; computes once the peptide affinity JSONs are produced.
 
 ## Current Data Layout
 
@@ -562,9 +565,16 @@ Rognan finding that the raw scalars were largely mutation-insensitive. The open
 question is whether Boltz-2's *own scalar output* preserves it.
 
 **Open Part-2 items:**
-1. **(top priority — the remaining gap)** Extract peptide affinity JSONs to add
-   the raw-Boltz scalar baseline (B2-A / B2-C) — the apples-to-apples Rognan
-   comparison; the embedding-model arm alone cannot make that claim.
+1. **(remaining gap — now external-compute-bound only)** Raw-Boltz scalar
+   baseline (B2-A / B2-C), the apples-to-apples Rognan comparison the
+   embedding-model arm cannot make. The *analysis* is done and verified
+   (`scripts/part2_raw_boltz_baseline.py`, smoke-tested on synthetic JSONs); it
+   reads `data/Boltz-2/peptides/<system>/<receptor>/output/<pid>/affinity_<pid>.json`
+   (Part-1 schema: `affinity_pred_value` lower=stronger, `affinity_probability_binary`
+   higher=stronger), joins to the manifests, and prints raw-Boltz vs the
+   embedding arm side by side. The only thing left is **running Boltz-2 over the
+   2139 input YAMLs** (external GPU job via the `../boltz` fork) so the JSONs
+   exist; re-running the script then produces the baseline.
 
 - **[done 2026-05-25]** WT-anchored ΔΔG-sign metric (replaced the crude
   `sign_agreement_vs_median`); sign agreement = 1.00 on |ΔΔG| ≥ 1 kcal/mol in
