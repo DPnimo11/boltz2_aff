@@ -94,18 +94,31 @@ def analyze_bh3(receptor: str) -> dict:
     rho, p = spearmanr(oof, y)
     r, _ = pearsonr(oof, y)
 
+    # Within-background reads. (a) pooled = Spearman of the pooled model's OOF
+    # preds restricted to this background. (b) within_cv = a model cross-
+    # validated *only* within this background, so the within-series ranking
+    # borrows no cross-background signal (the honest within-series number).
     per_bg = {}
     for b in sorted(set(bg)):
         m = bg == b
-        if m.sum() >= 5:
-            brho, bp = spearmanr(oof[m], y[m])
-            per_bg[b] = {"n": int(m.sum()), "spearman": float(brho), "p": float(bp)}
+        if m.sum() < 10:
+            continue
+        pooled_rho, _ = spearmanr(oof[m], y[m])
+        within = _ridge_oof(X[m], y[m],
+                            KFold(n_splits=5, shuffle=True, random_state=0))
+        within_rho, within_p = spearmanr(within, y[m])
+        per_bg[b] = {
+            "n": int(m.sum()),
+            "spearman_pooled_oof": float(pooled_rho),
+            "spearman_within_cv": float(within_rho),
+            "spearman_within_cv_p": float(within_p),
+        }
 
     return {
         "receptor": receptor,
         "n": int(len(y)),
         "label": "apparent_value (higher=tighter)",
-        "cv": "KFold(5, shuffle)",
+        "cv": "KFold(5, shuffle); per-bg = within-background KFold(5)",
         "spearman_oof_vs_measured": float(rho),
         "spearman_p": float(p),
         "pearson_oof_vs_measured": float(r),
@@ -134,6 +147,7 @@ def analyze_p53(receptor: str) -> dict:
         if wt is None or wt["peptide_id"] not in emb:
             continue
         wt_vec = emb[wt["peptide_id"]]
+        wt_pkd = -math.log10(float(wt["kd_M"]))
 
         def collect(classes: set[str]):
             d_list, ddg_list, pkd_list, vecs = [], [], [], []
@@ -168,20 +182,28 @@ def analyze_p53(receptor: str) -> dict:
                 "magnitude_probe_spearman_dist_vs_absDDG": float(mag_rho),
                 "magnitude_probe_p": float(mag_p),
             }
-            # n-limited supervised: LOO Ridge -> Spearman(pred pKd, pKd)
+            # n-limited supervised: LOO Ridge over {mutants + WT} -> pKd. WT is
+            # appended so it is held out in its own fold and serves as a genuine
+            # reference for the ΔΔG-sign test below.
             if len(d) >= 6:
-                oof = _ridge_oof(vecs, pkd, LeaveOneOut())
-                srho, sp = spearmanr(oof, pkd)
-                # ΔΔG-sign agreement: predicted weaker/tighter vs WT direction.
-                # measured: lower pKd than WT => weaker (ddG>0). Predicted dir
-                # from oof relative to its own median (WT excluded from set).
-                pred_delta = oof - np.median(oof)
-                meas_delta = pkd - np.median(pkd)
-                sign_agree = float(np.mean(np.sign(pred_delta) == np.sign(meas_delta)))
+                X_all = np.vstack([vecs, wt_vec[None, :]])
+                pkd_all = np.append(pkd, wt_pkd)
+                oof_all = _ridge_oof(X_all, pkd_all, LeaveOneOut())
+                mut_oof, wt_oof = oof_all[:-1], oof_all[-1]
+                srho, sp = spearmanr(mut_oof, pkd)
+                # WT-anchored ΔΔG-sign agreement: predicted destabilization
+                # (pKd_WT_heldout - pKd_mut) vs measured ddG (positive=weaker).
+                pred_ddg = wt_oof - mut_oof
+                agree = np.sign(pred_ddg) == np.sign(ddg)
+                strong = np.abs(ddg) >= 1.0  # clear effects, above assay noise
                 entry.update({
                     "supervised_loo_spearman": float(srho),
                     "supervised_loo_p": float(sp),
-                    "sign_agreement_vs_median": sign_agree,
+                    "ddg_sign_agreement": float(np.mean(agree)),
+                    "ddg_sign_n": int(len(agree)),
+                    "ddg_sign_agreement_strong": (
+                        float(np.mean(agree[strong])) if strong.any() else None),
+                    "ddg_sign_n_strong": int(strong.sum()),
                 })
             block_out[label] = entry
 
@@ -197,11 +219,12 @@ def main() -> int:
 
     print(f"Embedding view: {EMB_KEY}\n")
     print("=== BH3: supervised CV Spearman (embeddings -> apparent affinity) ===")
-    print(f"{'receptor':<10}{'n':>5}{'Spearman':>11}{'p':>11}{'Pearson':>10}   per-bg")
+    print(f"{'receptor':<10}{'n':>5}{'Spearman':>11}{'p':>11}{'Pearson':>10}"
+          f"   within-bg CV Spearman")
     for receptor in ("Bcl-xL", "Mcl-1", "Bfl-1"):
         res = analyze_bh3(receptor)
         out["bh3"][receptor] = res
-        bg = "  ".join(f"{b}:{v['spearman']:.3f}(n{v['n']})"
+        bg = "  ".join(f"{b}:{v['spearman_within_cv']:.3f}(n{v['n']})"
                        for b, v in res["per_background"].items())
         print(f"{receptor:<10}{res['n']:>5}{res['spearman_oof_vs_measured']:>11.3f}"
               f"{res['spearman_p']:>11.2e}{res['pearson_oof_vs_measured']:>10.3f}   {bg}")
@@ -213,9 +236,14 @@ def main() -> int:
         out["p53"][receptor] = res
         for sc, blocks in res["scaffolds"].items():
             for label, e in blocks.items():
-                sup = (f"  | LOO Spearman={e['supervised_loo_spearman']:.3f}"
-                       f" sign-agree={e['sign_agreement_vs_median']:.2f}"
-                       if "supervised_loo_spearman" in e else "")
+                if "supervised_loo_spearman" in e:
+                    strong = ("n/a" if e["ddg_sign_agreement_strong"] is None
+                              else f"{e['ddg_sign_agreement_strong']:.2f}")
+                    sup = (f"  | LOO rho={e['supervised_loo_spearman']:.3f}"
+                           f" ddG-sign={e['ddg_sign_agreement']:.2f}"
+                           f" (|ddG|>=1: {strong} on n={e['ddg_sign_n_strong']})")
+                else:
+                    sup = ""
                 print(f"  {receptor}/{sc}/{label} (n={e['n']}): "
                       f"magnitude rho={e['magnitude_probe_spearman_dist_vs_absDDG']:.3f} "
                       f"(p={e['magnitude_probe_p']:.3f}){sup}")

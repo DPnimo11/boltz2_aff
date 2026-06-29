@@ -26,6 +26,11 @@ across 10 targets of 0.763.
   (embedding shift under mutation; QC of the extracted set).
 - `scripts/part2_analysis.py` — Part-2 within-series Spearman / ΔΔG-magnitude
   analysis (joins peptide embeddings to measured affinity via the manifests).
+- `scripts/part2_extras.py` — Part-2 follow-ups needing no new data: embedding-key
+  sweep, BH3 replicate noise ceiling, and BH3 cross-target selectivity.
+- `scripts/part2_raw_boltz_baseline.py` — Part-2 raw Boltz-2 scalar baseline
+  (B2-A / B2-C within-series Spearman + ΔΔG-sign, the Rognan comparison). Built
+  and verified; computes once the peptide affinity JSONs are produced.
 
 ## Current Data Layout
 
@@ -598,14 +603,21 @@ comparison still needs the JSONs).
 
 - **BH3** — supervised CV (KFold-5) Spearman of embeddings → `apparent_value`
   (higher = tighter), n=689/receptor: Bcl-xL 0.657, Mcl-1 0.766, Bfl-1 0.791
-  (all p ≤ 1e-86, Pearson 0.62/0.82/0.78). Within-background: Bim 0.68/0.80/0.79;
-  PUMA 0.30/0.63/0.79 — PUMA-background on Bcl-xL (0.295) is the one weak case.
+  (all p ≤ 1e-86, Pearson 0.62/0.82/0.78). **Within-background CV** (refined
+  2026-05-25 — a model CV'd *only* within Bim or PUMA, the honest within-series
+  read): Bim 0.69/0.78/0.77, PUMA 0.27/0.66/0.75. These track the pooled split
+  closely, so the ranking borrows no cross-background signal; PUMA-background on
+  Bcl-xL (0.27) is the one weak case, now confirmed robust.
 - **p53** — only ~10–11 point mutants per scaffold per receptor, too few for a
   384-dim supervised model, so the headline is the *model-free magnitude probe*:
   Spearman(embedding shift-from-WT, measured |ΔΔG|). PMI 0.80–0.92,
-  p53(17–28) 0.65–0.72 (point only); including truncations 0.75–0.85. A LOO-Ridge
-  Spearman (0.67–0.94) and a crude `sign_agreement_vs_median` are reported in the
-  JSON as n-limited secondary numbers, not relied upon.
+  p53(17–28) 0.65–0.72 (point only); including truncations 0.75–0.85. Secondary,
+  n-limited: LOO-Ridge Spearman 0.66–0.95, and a **WT-anchored ΔΔG-sign
+  agreement** (refined 2026-05-25: predicted `pKd_WT(held-out) − pKd_mut` vs
+  measured ΔΔG). Overall sign agreement is 0.64–0.87, but on the *clear effects*
+  (|ΔΔG| ≥ 1 kcal/mol) it is **1.00 in 6/8 series** — every clearly
+  (de)stabilizing mutation gets the right direction; disagreements sit on
+  near-neutral mutations within assay noise.
 
 **Takeaway:** the mutational signal is clearly present in the representation that
 feeds Boltz-2's scalar affinity heads, for both systems — contrasting with the
@@ -613,10 +625,48 @@ Rognan finding that the raw scalars were largely mutation-insensitive. The open
 question is whether Boltz-2's *own scalar output* preserves it.
 
 **Open Part-2 items:**
-1. Extract peptide affinity JSONs to add the raw-Boltz scalar baseline (B2-A /
-   B2-C) — the apples-to-apples Rognan comparison; the embedding-model arm alone
-   cannot make that claim.
-2. Replace `sign_agreement_vs_median` with a proper ΔΔG-sign metric anchored to
-   a held-out WT reference.
-3. BH3 CV uses random KFold over distinct sequences; the within-background
-   Spearman is the cleaner within-series read. Consider grouped CV by background.
+1. **(remaining gap — now external-compute-bound only)** Raw-Boltz scalar
+   baseline (B2-A / B2-C), the apples-to-apples Rognan comparison the
+   embedding-model arm cannot make. The *analysis* is done and verified
+   (`scripts/part2_raw_boltz_baseline.py`, smoke-tested on synthetic JSONs); it
+   reads `data/Boltz-2/peptides/<system>/<receptor>/output/<pid>/affinity_<pid>.json`
+   (Part-1 schema: `affinity_pred_value` lower=stronger, `affinity_probability_binary`
+   higher=stronger), joins to the manifests, and prints raw-Boltz vs the
+   embedding arm side by side. The only thing left is **running Boltz-2 over the
+   2139 input YAMLs** (external GPU job via the `../boltz` fork) so the JSONs
+   exist; re-running the script then produces the baseline.
+
+- **[done 2026-05-25]** WT-anchored ΔΔG-sign metric (replaced the crude
+  `sign_agreement_vs_median`); sign agreement = 1.00 on |ΔΔG| ≥ 1 kcal/mol in
+  6/8 series. In `scripts/part2_analysis.py` (`analyze_p53`).
+- **[done 2026-05-25]** BH3 within-background CV (model CV'd within each Bim/PUMA
+  background); within-series ranking holds, PUMA-on-Bcl-xL stays the weak case.
+  In `scripts/part2_analysis.py` (`analyze_bh3`).
+
+### Part 2 extras (2026-05-25)
+
+`scripts/part2_extras.py` → `runs/peptide_embeddings/part2_extras.json`. Three
+follow-ups that need no new data:
+
+- **Embedding-key sweep** — no dominant view (BH3 CV Spearman 0.64–0.80, p53
+  magnitude probe 0.69–0.83 across `pair_mean`/`head_ens1`/`head_ens2`/`head_mean`
+  /`pair_mean+head_mean`). `head_mean` and the `pair_mean+head_mean` concat are
+  consistently among the best, so the `head_mean` default is fine; best-per-target
+  varies (e.g. `pair_mean` 0.668 on Bcl-xL, `head_ens1` 0.830 on p53/MDM2),
+  echoing Part 1's "no universal best component".
+- **Replicate noise ceiling (BH3)** — test-retest Spearman between the main and
+  replicate SORTCERY sorts, **computed within concentration** (pooling Bcl-xL's
+  1 nM x1 and 100 nM x100 sorts had deflated its ceiling to 0.505 — a confound).
+  Concentration-matched: Bcl-xL 0.831 (@1 nM), Mcl-1 0.955 (@1 nM), Bfl-1 0.924
+  (@100 nM). The head_mean CV model (0.657/0.766/0.791) recovers **~79/80/86 %**
+  of the achievable ranking signal — labels are highly reproducible, so the
+  ~15–20 % gap is real model headroom, not label noise (Bcl-xL is both the
+  hardest target and has the lowest ceiling).
+- **Cross-target selectivity (BH3)** — the 689 peptides are folded against all
+  three receptors, so predicted vs measured *receptor preference* can be scored.
+  Affinities are percentile-rank-normalised within each receptor first (SORTCERY
+  values are only internally consistent per target), then selectivity =
+  percentile[r1] − percentile[r2]. Spearman of predicted vs measured selectivity:
+  Mcl-1/Bcl-xL 0.766, Bfl-1/Bcl-xL 0.728, Mcl-1/Bfl-1 0.670 (all p ≤ 1e-91,
+  n=689). The embeddings capture Bcl-2-family **selectivity**, not just
+  per-receptor affinity — the headline strength of the BH3 system.
