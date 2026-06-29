@@ -1,0 +1,6 @@
+#!/bin/csh
+set mols=`ls ????.pdb`
+foreach mol ($mols)
+	set mol_dir=$mol:r
+	pdb2fasta -i $mol -o $mol_dir.fasta -c ++ -n 100
+end
