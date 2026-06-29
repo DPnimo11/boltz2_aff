@@ -1,5 +1,9 @@
 /papers
-/data
+/data/*
+!/data/peptide_systems/
+/data/peptide_systems/*
+!/data/peptide_systems/systems/
+!/data/peptide_systems/systems/**
 /runs
 /artifacts
 __pycache__/
