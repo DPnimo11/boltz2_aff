@@ -280,7 +280,7 @@ Follow-ups (`part2_extras.py`): against the SORTCERY **replicate noise ceiling**
 (0.83/0.96/0.92 for Bcl-xL/Mcl-1/Bfl-1) the model recovers ~79–86% of the
 achievable ranking signal; and the embeddings capture Bcl-2-family
 **selectivity** (predicted vs measured receptor preference, Spearman 0.67–0.77,
-n=689). See `context.md` "Part 2 extras".
+n=689). See `AGENTS.md` "Part 2 extras".
 
 ## Notes for Future Work
 
