@@ -135,14 +135,41 @@ Per system, `data/peptide_systems/boltz_inputs/<system>/` contains:
 - `measurements.tsv` — every original curated observation mapped to `input_id`.
 - The parent `boltz_inputs/manifest.tsv` summarizes counts and chain decisions.
 
-The YAMLs deliberately omit `properties.affinity` by default. Stock local
-Boltz-2 rejects protein affinity binders and supports only one small-molecule
-ligand chain. `--affinity-side` / `--binder-override` exist only for a custom
-runner known to support protein binders. `1AO7_ABC_DE` remains a special blocker
-because both measured partners are multi-chain and choosing D or E alone is not
-scientifically neutral. An MSA policy is also required before production runs;
-the YAMLs currently omit `msa`, so use of the MSA server, a controlled reused
-WT MSA, or single-sequence mode must be chosen explicitly.
+Every generated protein entry has `msa: empty`; single-sequence execution is an
+intentional and resolved part of the experiment.
+
+The YAMLs deliberately omit `properties.affinity` by default. The local
+`../boltz` fork **does** contain the custom embedding exporter (`dacb835`): it
+returns pre-MLP `g_pair_mean` and post-MLP `g_head`, propagates the ensemble
+representations, and writes `affinity_embeddings_<record_id>.npz`. However,
+that patch does not extend affinity input parsing or masking to protein binders:
+
+- `schema.py` still requires one string binder of entity type `ligand`.
+- `AffinityInfo` / the tokenizer create an affinity mask for one chain.
+- The affinity module defines `rec_mask` as all protein tokens, so simply
+  marking a protein as binder would make binder and receptor masks overlap.
+- The feature path expects an `affinity_mw` value even though MW correction is
+  off by default.
+
+Consequently, the checked-in fork can export the desired embeddings once its
+affinity path runs, but it cannot trigger that path from these PPI YAMLs without
+an additional protein-binder patch. `--affinity-side` / `--binder-override`
+exist only for such a patched runner. `1AO7_ABC_DE` additionally needs a true
+multi-chain group binder; choosing D or E alone is not scientifically neutral.
+The correct pooling semantics are binder group versus the other measured
+partner, with binder tokens excluded from the receptor mask.
+
+The small-molecule training domain is **the premise of this stress test**, not
+an execution blocker: the goal is explicitly to learn whether those
+out-of-domain affinity representations still encode protein-interface mutation
+effects.
+
+The existing 2,139 BH3/p53 artifacts prove another peptide extraction path ran,
+but their normalized keys (`pair_mean`, `head_ens1`, `head_ens2`, `head_mean`)
+do not match this fork's raw writer keys. No producer for that schema is present
+in either checked tree or another local/remote `../boltz` branch. Locate that
+script/patch before implementing protein-binder support again; it may already
+contain the missing mask logic.
 
 ### Intended per-system modeling
 

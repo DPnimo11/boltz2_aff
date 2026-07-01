@@ -14,6 +14,8 @@ the audit details and unresolved decisions visible as the workflow evolves.
   text table, curated `_New.txt` source of truth, Excel mirror, and optional
   `.wt` file.
 - `scripts/make_boltz_inputs_peptide_systems.py` is the preserved generator.
+- Every generated protein chain explicitly uses `msa: empty`; this is an
+  intentional single-sequence experiment and does not require an MSA server.
 - Generated inputs and manifests live under
   `data/peptide_systems/boltz_inputs/<system>/` rather than the Part-1
   `data/Boltz-2/` tree.
@@ -110,41 +112,71 @@ included. `3SE3.fasta` also contains chain C, but the measured system is
 if the intended experiment requires the complete ternary complex rather than
 the measured B-A pair.
 
-## Open execution issues
+## Boltz fork audit and remaining execution issue
 
-1. **Protein affinity is not supported by stock Boltz-2.** The local
-   `../boltz` parser requires `properties.affinity.binder` to name one
-   small-molecule ligand chain. These inputs are protein-protein complexes.
-   The default generated YAMLs therefore omit the affinity property and can be
-   used for cofolding, but they will not request affinity scalars or affinity-
-   head embeddings.
-2. **A custom protein-affinity runner is still required for the embedding
-   experiment.** The generator exposes `--affinity-side` and
-   `--binder-override` only for a runner known to support a protein binder.
-   Stock Boltz will reject those YAMLs.
-3. **Multi-chain binder semantics are unresolved.** `1AO7_ABC_DE` has
-   multi-chain partners on both sides. Choosing D or E alone would represent
-   only half of the T-cell receptor and is not scientifically neutral. A true
-   group-binder mask is preferable if the custom affinity fork can support it.
-4. **MSA policy must be fixed before the production run.** The YAMLs omit
-   `msa`; stock execution therefore needs `--use_msa_server` or an explicit
-   MSA/single-sequence policy. Re-querying MSAs for every mutant is expensive
-   and can add variation unrelated to the mutation. Reusing a controlled WT
-   MSA with an appropriately mutated query, or intentionally using
-   single-sequence mode, should be evaluated.
-5. **Detection-limit observations need a modeling policy.** The curated files
-   contain weak-binding detection-cap notes and numeric capped values. The
-   generator preserves them but does not infer censoring. Exact-value
-   regression should either flag/exclude them in a sensitivity analysis or use
-   a censored likelihood.
-6. **The affinity head is out of domain even if made runnable.** Boltz-2's
-   affinity module was trained for small-molecule binders. Protein-interface
-   scalars and embeddings are exploratory and must be described as such.
-7. **External preparation scripts are unavailable here.** The notes mention
-   `run_babel.bat` and `runabcg.bat`, but neither is in this repository.
-   Open-Babel SMILES/MOL2 conversion is probably irrelevant to these all-
-   protein systems; the charge/force-field and ligand-residue interaction-
-   energy role of `runabcg.bat` must be confirmed when Dad's workflow arrives.
+The local `../boltz` fork was inspected at commit `dacb835` ("update to save
+affinity embeddings"). That patch is present and does exactly the needed
+export work once the affinity path runs:
+
+- `affinity.py` returns the pooled pre-MLP `g_pair_mean` and post-MLP `g_head`.
+- `boltz2.py` propagates both representations for one- and two-model affinity
+  execution.
+- `writer.py` writes them to `affinity_embeddings_<record_id>.npz` beside the
+  scalar affinity JSON.
+
+The fact that the affinity head was trained on small molecules is **not an open
+issue** here. Testing whether its representations remain informative for
+protein/peptide mutation series is the purpose of the experiment. Results must
+be interpreted as an out-of-domain stress test, but domain mismatch is not a
+reason to stop.
+
+Single-sequence execution is also resolved: every protein entry now has
+`msa: empty`.
+
+One code-level blocker remains in the checked-in fork: the export patch does
+not extend affinity input semantics from a small-molecule ligand to a protein
+partner.
+
+1. `data/parse/schema.py` rejects an affinity binder unless it is one string
+   naming an entity of type `ligand`.
+2. The tokenizer creates `affinity_token_mask` for one `AffinityInfo.chain_id`.
+3. The affinity module defines `rec_mask` as **all protein tokens** and assumes
+   the affinity mask is a non-protein ligand. If a protein chain were simply
+   marked as binder, binder tokens would overlap the receptor mask; the
+   resulting cross-pair pooling would not cleanly mean binder-versus-partner.
+4. The inference feature path always carries `affinity_mw`. Molecular-weight
+   correction is off by default, but a protein-binder patch still needs a
+   defined numeric/optional value that survives batching.
+5. `1AO7_ABC_DE` requires a group binder because both partners are multi-chain.
+   Selecting D or E alone represents only half of the T-cell receptor. The
+   schema, `AffinityInfo`, tokenizer mask, and pooling path currently support
+   only one chain.
+
+Therefore the generated YAMLs still omit `properties.affinity` by default and
+can run the structure path in single-sequence mode, but they cannot trigger the
+affinity embedding writer with the checked-in fork alone. If another
+protein-binder patch already exists in the production environment, it should
+be synchronized or documented here. Otherwise the next implementation step is
+to add a binder-chain-group mask, define `rec_mask = protein_mask &
+~binder_mask`, and make molecular weight optional for embedding-only PPI runs.
+
+There is evidence that an additional peptide extraction path existed: the
+2,139 prior BH3/p53 artifacts contain `pair_mean`, `head_ens1`, `head_ens2`,
+`head_mean`, `peptide_id`, and `target`, whereas this fork's writer emits raw
+`affinity_embedding_pair_mean{1,2}` / `affinity_embedding_head{1,2}` keys. No
+producer for that normalized peptide schema is present in either checked tree
+or in any local/remote `../boltz` branch. Locating that script or patch is the
+main remaining provenance question; it may already implement the missing
+protein-binder behavior.
+
+## Remaining analysis issue
+
+**Detection-limit observations need a modeling policy.** The curated files
+contain weak-binding detection-cap notes and numeric capped values. The
+generator preserves them but does not infer censoring. Exact-value regression
+should either flag/exclude them in a sensitivity analysis or use a censored
+likelihood. Repeated measurements are already preserved and summarized; their
+primary median-label and sensitivity-analysis policy is described above.
 
 ## Planned per-system analysis
 

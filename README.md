@@ -194,11 +194,15 @@ field 3. Most systems map directly to FASTA positions; 3S9D requires sequence
 alignment because its FASTA contains extra residues. The generator validates
 all coordinates and source amino acids.
 
-The default YAMLs are sequence-only and omit `properties.affinity`: stock
-Boltz-2 only accepts a single small-molecule affinity binder, while these are
-protein–protein systems and `1AO7_ABC_DE` has multi-chain partners on both
-sides. A custom protein-affinity runner and an explicit MSA policy are still
-needed before extracting the embeddings for per-system models.
+Every protein entry uses `msa: empty`, so this is intentionally a
+single-sequence experiment. The default YAMLs omit `properties.affinity`: the
+local fork exports pre/post-head affinity embeddings once the affinity path
+runs, but its parser and masks still support only one small-molecule ligand
+binder. A protein/group-binder mask is therefore still required before these
+PPI YAMLs can trigger embedding export; `1AO7_ABC_DE` specifically needs a
+multi-chain binder. Applying the small-molecule-trained representation out of
+domain is intentional—the point is to test whether it still carries useful
+protein-interface mutation signal.
 
 See `AGENTS.md` for the full data contract and
 `docs/peptide_systems_log.md` for the generation audit, repeated-measurement

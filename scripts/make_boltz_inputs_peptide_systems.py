@@ -16,10 +16,13 @@ YAML is written per unique canonical mutation set (plus WT), while
 shared ``input_id``.  ``variants.tsv`` contains one row per generated YAML and
 summarizes replicate delta-delta-G values without discarding the originals.
 
-By default the YAMLs request structure prediction only.  Stock Boltz-2 accepts
-only a single small-molecule affinity binder, whereas these are protein-protein
-systems and some partners span multiple chains.  ``--affinity-side`` is
-therefore an explicit custom-runner option, not the default.
+Every protein chain is emitted with ``msa: empty`` because this experiment is
+intentionally single-sequence.  By default the YAMLs request structure
+prediction only.  The checked-in Boltz fork exports affinity embeddings but
+still accepts only a single small-molecule affinity binder, whereas these are
+protein-protein systems and some partners span multiple chains.
+``--affinity-side`` is therefore an explicit future-patch option, not the
+default.
 """
 
 from __future__ import annotations
@@ -428,6 +431,7 @@ def render_yaml(sequences: dict[str, str], binder: str | None) -> str:
                 "  - protein:",
                 f"      id: {chain}",
                 f"      sequence: {sequence}",
+                "      msa: empty",
             ]
         )
     if binder is not None:
@@ -721,8 +725,8 @@ def main() -> int:
     print(f"Manifests and inputs: {out_root}")
     if args.affinity_side == "none" and not overrides:
         print(
-            "Affinity property omitted (structure-only inputs; choose an MSA policy "
-            "before stock-Boltz execution)."
+            "Affinity property omitted (structure-only inputs; protein chains use "
+            "msa: empty)."
         )
     return 0
 
