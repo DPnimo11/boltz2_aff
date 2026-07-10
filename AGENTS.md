@@ -26,6 +26,9 @@ across 10 targets of 0.763.
   applies curated mutations to the measured FASTA chain groups, deduplicates
   structures without dropping repeated measurements, and writes Boltz YAMLs
   plus manifests under `data/peptide_systems/boltz_inputs/`.
+- `scripts/_build_aff_emb.py` — post-hoc Part-2 embedding reconstruction from
+  saved trunk `z`; pools an explicit binder-chain-group/partner interface and
+  applies the two checkpoint affinity MLPs.
 - `docs/peptide_systems_log.md` — active Part-2 implementation/audit log and
   unresolved execution/modeling issues.
 - `scripts/analyze_peptide_embeddings.py` — label-free Part-2 diagnostic
@@ -55,13 +58,20 @@ across 10 targets of 0.763.
   `data/peptide_systems/systems/<PDB>/`; generated sequence-only Boltz inputs
   and one-to-many measurement manifests live under
   `data/peptide_systems/boltz_inputs/<system>/`.
+- **Active Part-2 modeling bundle:**
+  `data/peptide_systems/modeling_bundle/` contains all 1,705 consolidated
+  `pair_mean`/head embeddings, labels, raw observations, row index, manifest,
+  and modeling context. It is complete for the primary embedding-versus-ΔΔG
+  analysis and was audited on 2026-07-10. `index.tsv` matches NPZ order;
+  `labels.tsv` does not, so always join on `(system, input_id)` rather than
+  row position.
 - **BH3/p53 Part 2 (on hold):** source papers remain under
   `papers/peptides/{bh3,p53,p53_2,HLA_A0201}/`, parsed tables under
   `data/peptides/<system>/`, and the 2,139 previously extracted embeddings under
   `targets/peptides/`. They use the newer `pair_mean`/`head_mean` export schema
   and are deliberately not discovered by the Part-1 pipeline.
 
-## `data/peptide_systems/` — active Part-2 system set (2026-06-29)
+## `data/peptide_systems/` — active Part-2 system set (updated 2026-07-10)
 
 This is a curated SKEMPI subset of **13 classic protein–protein complexes with
 experimental point-mutation ΔΔG data**: 1A22, 1AO7, 1BRS, 1CHO, 1GC1, 1JTG,
@@ -159,17 +169,43 @@ multi-chain group binder; choosing D or E alone is not scientifically neutral.
 The correct pooling semantics are binder group versus the other measured
 partner, with binder tokens excluded from the receptor mask.
 
+The completed production extraction bypassed that direct-path limitation. The
+structure path ran for all 1,705 inputs and retained the trunk pair tensor `z`;
+the tracked `scripts/_build_aff_emb.py` then pooled the intended interface and
+applied the two affinity MLPs post hoc. The consolidated result is
+`data/peptide_systems/modeling_bundle/affinity_embeddings.npz` with normalized
+keys `ids`, `target`, `pair_mean`, `head_ens1`, `head_ens2`, and `head_mean`.
+Effective auto-selected binders are 1A22=A, 1AO7=DE, 1BRS=D, 1CHO=I, 1GC1=C,
+1JTG=B, 1VFB=C, 2B2X=A, 3BT1=A, 3HFM=Y, 3S9D=A, 3SE3=B, and 4G0N=B.
+
+Companion TSVs in the same bundle are intentionally consolidated copies of the
+generated tables: `labels.tsv` is the primary one-row-per-`input_id` modeling
+table and exactly concatenates the 13 `variants.tsv` files; `measurements.tsv`
+is the one-row-per-observation replicate table and exactly concatenates the 13
+per-system `measurements.tsv` files; `manifest.tsv` is the top-level generated
+system manifest; `index.tsv` is a human-readable NPZ row map derived from
+`ids`. `measurements.tsv` is not a second experimental dataset.
+
+The bundle was produced with `_build_aff_emb.py`'s default compatibility mode,
+which omits the affinity MLP's trailing ReLU. Thus its `head_*` values are
+pre-final-ReLU (negative values are expected), not the fork writer's exact
+post-ReLU `g_head`. Apply ReLU to each ensemble head separately before
+averaging, or regenerate with `--final-relu`, for a faithful `g_head` pass.
+The primary `pair_mean` representation is unaffected.
+
 The small-molecule training domain is **the premise of this stress test**, not
 an execution blocker: the goal is explicitly to learn whether those
 out-of-domain affinity representations still encode protein-interface mutation
 effects.
 
-The existing 2,139 BH3/p53 artifacts prove another peptide extraction path ran,
-but their normalized keys (`pair_mean`, `head_ens1`, `head_ens2`, `head_mean`)
-do not match this fork's raw writer keys. No producer for that schema is present
-in either checked tree or another local/remote `../boltz` branch. Locate that
-script/patch before implementing protein-binder support again; it may already
-contain the missing mask logic.
+A normalized-schema producer is now present as `scripts/_build_aff_emb.py`, so
+the active bundle's `pair_mean`/head construction is locally specified even
+though the exact historical BH3/p53 producer is not needed for the active
+direction. The saved trunk tensors, structures, confidence JSONs, checkpoint,
+and full production run log remain on the execution machine rather than in the
+modeling bundle. Raw Boltz scalar affinity outputs were not included, so the
+bundle alone does not support the raw-scalar baseline or re-pooling with
+another binder choice.
 
 ### Intended per-system modeling
 
@@ -177,8 +213,11 @@ Build one model per system, analogous to Part 1 but with continuous ΔΔG as the
 primary task. Use one row per unique `input_id`, median ΔΔG as the primary label,
 and retain replicate count/spread for uncertainty analysis. Compare a simple
 mutation baseline against Boltz embeddings and their combination; later add
-LRIP interaction-energy features. Prefer WT-difference embeddings and strongly
-regularized Ridge/PLS with nested CV because n is 47–275 while p is large.
+LRIP interaction-energy features by joining on `(system, input_id)`. The bundle
+is ready for that combined modeling step once LRIP features exist, but it does
+not contain the poses/MM-GBSA outputs needed to generate LRIP. Prefer
+WT-difference embeddings and strongly regularized Ridge/PLS with nested CV
+because n is 47–275 while p is large.
 Headline metrics are out-of-fold Spearman and ΔΔG-sign agreement, with MAE and
 Pearson secondary. A position-held-out split is a stricter follow-up for
 overlapping multi-mutants.

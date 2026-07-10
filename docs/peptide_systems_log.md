@@ -1,6 +1,6 @@
 # Peptide-system pipeline log
 
-Last updated: 2026-06-29
+Last updated: 2026-07-10
 
 This is the implementation and issue log for the active Part-2 SKEMPI subset.
 The authoritative operational summary also lives in `AGENTS.md`; this file keeps
@@ -19,6 +19,10 @@ the audit details and unresolved decisions visible as the workflow evolves.
 - Generated inputs and manifests live under
   `data/peptide_systems/boltz_inputs/<system>/` rather than the Part-1
   `data/Boltz-2/` tree.
+- The transferred, consolidated modeling data now lives in
+  `data/peptide_systems/modeling_bundle/`: 1,705 embeddings plus their labels,
+  raw observations, row index, manifest, and modeling context. This is the
+  versioned, analysis-ready Part-2 dataset.
 - Regeneration command:
 
   ```powershell
@@ -71,6 +75,74 @@ Each system output contains:
 All 1,705 YAMLs were parsed successfully with PyYAML after generation. A second
 generation produced the same counts and replaced no valid inputs.
 
+## Transferred modeling data and validation (2026-07-10)
+
+The six files under `data/peptide_systems/modeling_bundle/` are complete for
+the primary embedding-versus-delta-delta-G analysis. The consolidated NPZ
+contains 1,705 rows with the expected normalized schema:
+
+- `ids` and `target`: 1,705 strings.
+- `pair_mean`: `(1705, 128)` float32.
+- `head_ens1`, `head_ens2`, and `head_mean`: `(1705, 384)` float32.
+
+The following checks pass:
+
+- All numeric arrays are finite; all 1,705 composite IDs are unique; no two
+  rows have exactly identical `pair_mean`, `head_ens1`, or `head_ens2` vectors.
+- `index.tsv` exactly reproduces NPZ row order and target membership.
+- The NPZ and `labels.tsv` have identical ID sets. Every system has exactly one
+  WT row, and distinct variants do not collapse to duplicate chain sequences.
+- `labels.tsv` is deliberately not in NPZ row order. Downstream code must join
+  on `(system, input_id)` rather than concatenate rows positionally.
+- All 2,136 rows in `measurements.tsv` map to a label. Recomputing replicate
+  count, IDs, median, mean, sample SD, minimum, and maximum delta-delta-G
+  reproduces every `labels.tsv` summary.
+- Every count in `manifest.tsv` recomputes from the labels and measurements.
+- Bundled `labels.tsv` and `measurements.tsv` are exact row-for-row
+  concatenations of the 13 generated per-system files; bundled `manifest.tsv`
+  is exactly equal to the generated top-level manifest.
+
+The effective auto-selected binder groups are: 1A22=A, 1AO7=DE, 1BRS=D,
+1CHO=I, 1GC1=C, 1JTG=B, 1VFB=C, 2B2X=A, 3BT1=A, 3HFM=Y, 3S9D=A, 3SE3=B,
+and 4G0N=B. The manifest's `affinity_binder` cells remain blank because blank
+means auto-select the smaller partner group; the accompanying context records
+the resulting choices explicitly.
+
+### What each TSV is and which data are repeated
+
+| File | Granularity | Role | Relationship to existing generated data |
+|---|---|---|---|
+| `index.tsv` | One row per NPZ embedding | Maps NPZ row number to `(system, input_id)` | Derived directly from NPZ `ids`; retained for readable and safe joins. |
+| `labels.tsv` | One row per unique WT or mutant structure | Primary label table: median ΔΔG, replicate summaries, mutation metadata, and exact sequences | Exact concatenation of the 13 `boltz_inputs/<system>/variants.tsv` files. |
+| `measurements.tsv` | One row per experimental observation | Preserves replicates and matched WT references for noise, uncertainty, and label-sensitivity analyses | Exact concatenation of the 13 `boltz_inputs/<system>/measurements.tsv` files. It is not a second experimental dataset. |
+| `manifest.tsv` | One row per system | Chain groups, binder setting, WT reference ΔG, and dataset counts | Exact copy of `boltz_inputs/manifest.tsv`. |
+
+These copies are intentional. `data/peptide_systems/boltz_inputs/` is
+generated, gitignored, and rebuildable, whereas `modeling_bundle/` is the
+compact, versioned analysis dataset. Removing the consolidated TSVs would save
+only about 1.2 MB and make the embeddings less portable.
+
+### Other redundancy
+
+No accidental duplicate feature rows or IDs were found. The bundle does have
+deliberate convenience/portability redundancy:
+
+- `index.tsv` repeats the NPZ ID-to-row mapping, and NPZ `target` is derivable
+  from the composite ID prefix.
+- `head_mean` is exactly the arithmetic mean of the two ensemble head arrays;
+  it accounts for about 2.42 MB of the 8.10 MB compressed NPZ.
+- Repeated rows in the observation table are intentional experimental
+  replicates/differently normalized measurements, not files to deduplicate.
+
+The current bundle intentionally omits the large trunk `z`, structures,
+confidence JSONs, model checkpoint, and production logs, which remain on the
+execution machine. It also omits raw Boltz scalar affinity outputs. Therefore
+it is sufficient for the primary embeddings + labels analysis, but not by
+itself for re-pooling with another binder definition, ipTM/pLDDT-filtered QC,
+exact end-to-end extraction reproduction, or the raw-scalar baseline. The data
+are nevertheless ready for the active PPI modeling implementation. The
+existing `scripts/part2_analysis.py` remains the older BH3/p53 analysis.
+
 ## Resolved data issues
 
 ### Mutation numbering and 3S9D
@@ -112,7 +184,7 @@ included. `3SE3.fasta` also contains chain C, but the measured system is
 if the intended experiment requires the complete ternary complex rather than
 the measured B-A pair.
 
-## Boltz fork audit and remaining execution issue
+## Boltz fork audit and extraction path
 
 The local `../boltz` fork was inspected at commit `dacb835` ("update to save
 affinity embeddings"). That patch is present and does exactly the needed
@@ -133,9 +205,9 @@ reason to stop.
 Single-sequence execution is also resolved: every protein entry now has
 `msa: empty`.
 
-One code-level blocker remains in the checked-in fork: the export patch does
-not extend affinity input semantics from a small-molecule ligand to a protein
-partner.
+One code-level blocker remains in the checked-in fork's **direct affinity
+path**: the export patch does not extend affinity input semantics from a
+small-molecule ligand to a protein partner.
 
 1. `data/parse/schema.py` rejects an affinity binder unless it is one string
    naming an entity of type `ligand`.
@@ -153,21 +225,26 @@ partner.
    only one chain.
 
 Therefore the generated YAMLs still omit `properties.affinity` by default and
-can run the structure path in single-sequence mode, but they cannot trigger the
-affinity embedding writer with the checked-in fork alone. If another
-protein-binder patch already exists in the production environment, it should
-be synchronized or documented here. Otherwise the next implementation step is
-to add a binder-chain-group mask, define `rec_mask = protein_mask &
-~binder_mask`, and make molecular weight optional for embedding-only PPI runs.
+cannot trigger the affinity writer directly. The completed production run
+bypassed that limitation safely: it ran the structure path, retained each
+complex's trunk pair tensor `z`, and then used the now-tracked
+`scripts/_build_aff_emb.py` to apply an explicit binder-group-versus-partner
+mask, pool `pair_mean`, and apply both checkpoint affinity MLPs. This script is
+now a tracked producer for the normalized `pair_mean` / `head_ens1` /
+`head_ens2` / `head_mean` schema and is compatible with the earlier BH3/p53
+artifacts.
 
-There is evidence that an additional peptide extraction path existed: the
-2,139 prior BH3/p53 artifacts contain `pair_mean`, `head_ens1`, `head_ens2`,
-`head_mean`, `peptide_id`, and `target`, whereas this fork's writer emits raw
-`affinity_embedding_pair_mean{1,2}` / `affinity_embedding_head{1,2}` keys. No
-producer for that normalized peptide schema is present in either checked tree
-or in any local/remote `../boltz` branch. Locating that script or patch is the
-main remaining provenance question; it may already implement the missing
-protein-binder behavior.
+This post-hoc route resolves the embedding extraction requirement without
+pretending the fork has native protein-binder affinity semantics. It does not
+produce the raw scalar affinity JSON baseline, and changing the binder choice
+still requires the saved trunk `z` on the execution machine.
+
+One schema detail matters for head comparisons: the transferred archive was
+produced with `_build_aff_emb.py`'s default, compatibility behavior, which
+omits the MLP's trailing ReLU. Its `head_*` arrays therefore contain negative
+pre-final-ReLU values. To reproduce the fork writer's exact `g_head`, apply
+ReLU to each ensemble head separately before averaging, or regenerate with
+`--final-relu`. The primary `pair_mean` representation is unaffected.
 
 ## Remaining analysis issue
 

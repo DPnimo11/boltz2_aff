@@ -195,12 +195,20 @@ alignment because its FASTA contains extra residues. The generator validates
 all coordinates and source amino acids.
 
 Every protein entry uses `msa: empty`, so this is intentionally a
-single-sequence experiment. The default YAMLs omit `properties.affinity`: the
-local fork exports pre/post-head affinity embeddings once the affinity path
-runs, but its parser and masks still support only one small-molecule ligand
-binder. A protein/group-binder mask is therefore still required before these
-PPI YAMLs can trigger embedding export; `1AO7_ABC_DE` specifically needs a
-multi-chain binder. Applying the small-molecule-trained representation out of
+single-sequence experiment. The default YAMLs omit `properties.affinity`, and
+the local fork's direct affinity parser/masks still only support a
+small-molecule ligand binder. Production embeddings for this set therefore
+came from the resolved post-hoc path: the structure run retained trunk `z`, and
+`scripts/_build_aff_emb.py` pooled the intended binder-group/partner interface
+into the normalized bundle at `data/peptide_systems/modeling_bundle/`.
+
+That bundle contains the 1,705-row `affinity_embeddings.npz`, a row-order
+`index.tsv`, the primary one-row-per-structure `labels.tsv`, the
+one-row-per-observation replicate `measurements.tsv`, and the system-level
+`manifest.tsv`. It is sufficient for embedding-versus-ΔΔG modeling now and for
+later combined models once LRIP feature tables exist, joined by
+`(system, input_id)`. It does not include the poses/MM-GBSA outputs needed to
+generate LRIP itself. Applying the small-molecule-trained representation out of
 domain is intentional—the point is to test whether it still carries useful
 protein-interface mutation signal.
 

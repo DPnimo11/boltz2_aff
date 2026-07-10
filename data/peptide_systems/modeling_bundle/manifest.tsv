@@ -1,0 +1,14 @@
+system	pdb_id	group1_chains	group2_chains	included_chains	excluded_fasta_chains	mapping_adjusted_chains	affinity_binder	measurement_rows	unique_mutants	inputs_with_wt	repeated_measurement_rows	mutants_with_repeated_measurements	multimutant_inputs	max_substitutions	wt_reference_dg_kcal_mol
+1A22_A_B	1A22	A	B	A,B				251	179	180	72	56	37	15	-12.7160
+1AO7_ABC_DE	1AO7	ABC	DE	A,B,C,D,E				212	151	152	61	33	56	8	-7.7745
+1BRS_A_D	1BRS	A	D	A,D				94	75	76	19	13	45	2	-18.6134
+1CHO_EFG_I	1CHO	EFG	I	E,F,G,I				295	275	276	20	20	84	11	-15.38831029
+1GC1_G_C	1GC1	G	C	G,C				67	67	68	0	0	2	3	-11.5186
+1JTG_A_B	1JTG	A	B	A,B				275	191	192	84	37	133	5	-12.0454
+1VFB_AB_C	1VFB	AB	C	A,B,C				72	63	64	9	9	14	2	-11.06545336
+2B2X_HL_A	2B2X	HL	A	H,L,A				115	94	95	21	19	91	8	-12.0533
+3BT1_A_U	3BT1	A	U	A,U				245	240	241	5	5	0	1	-12.7293
+3HFM_HL_Y	3HFM	HL	Y	H,L,Y				122	97	98	25	23	26	2	-13.7759
+3S9D_A_B	3S9D	A	B	A,B		A,B		218	141	142	77	48	60	3	-11.5692
+3SE3_B_A	3SE3	B	A	B,A	C			67	47	48	20	20	30	4	-10.3318
+4G0N_A_B	4G0N	A	B	A,B				90	72	73	18	13	42	6	-9.8281
