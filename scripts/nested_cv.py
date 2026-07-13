@@ -101,7 +101,7 @@ def nested_cv_target(
         y_train, y_test = y[train_idx], y[test_idx]
         g_train = groups[train_idx]
 
-        if len(np.unique(y_test)) < 2:
+        if len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
             continue
 
         # Fixed pair_mean1 on this outer fold (reference)
@@ -170,10 +170,19 @@ def nested_cv_target(
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--targets", nargs="+", default=ALL_TARGETS)
-    p.add_argument("--ulvsh-root", type=Path, default=Path("data/ULVSH"))
-    p.add_argument("--boltz-output-root", type=Path, default=Path("data/Boltz-2"))
+    p.add_argument("--ulvsh-root", type=Path, default=Path("data/ulvsh/source"))
     p.add_argument(
-        "--embedding-root", type=Path, action="append", default=[Path("targets")],
+        "--boltz-scalar-source",
+        "--boltz-output-root",
+        dest="boltz_scalar_source",
+        type=Path,
+        default=Path("data/ulvsh/modeling/features/boltz_scalars.tsv"),
+    )
+    p.add_argument(
+        "--embedding-root",
+        type=Path,
+        action="append",
+        default=[Path("data/ulvsh/modeling/features/boltz_embeddings")],
         help="Root(s) containing affinity_embeddings_*.npz files.",
     )
     p.add_argument("--outer-splits", type=int, default=3)
@@ -185,7 +194,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    embedding_roots = list(dict.fromkeys([*args.embedding_root, args.boltz_output_root]))
+    embedding_roots = list(dict.fromkeys(args.embedding_root))
 
     all_results: dict[str, dict] = {}
     summary_rows: list[dict] = []
@@ -196,7 +205,7 @@ def main() -> None:
     for target in args.targets:
         labels = load_ulvsh(args.ulvsh_root, [target], "raw", include_scores=True)
         embeddings = discover_embedding_frame(embedding_roots, [target])
-        boltz_scalars = discover_boltz_scalar_frame(args.boltz_output_root, [target])
+        boltz_scalars = discover_boltz_scalar_frame(args.boltz_scalar_source, [target])
 
         if embeddings.empty:
             print(f"{target:<10}  no embeddings")

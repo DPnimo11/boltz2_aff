@@ -3,7 +3,8 @@
 
 Generalizes the original 2-chain peptides script (rec=chain A, lig=chain B) to
 the multi-chain SKEMPI systems: the binder and receptor are now *chain groups*
-read from boltz_inputs/manifest.tsv. For each predicted complex it masks the
+read from ``data/peptide_systems/boltz/inputs/manifest.tsv``. For each predicted
+complex it masks the
 trunk pair representation z to the binder<->partner interface, pools it into
 pair_mean (128-d), and applies the two affinity-head MLPs from boltz2_aff.ckpt
 to get head_ens1/head_ens2/head_mean (384-d).
@@ -31,6 +32,7 @@ import argparse, csv, glob, os, sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(HERE)
 
 
 def load_mlps(ckpt_path):
@@ -187,11 +189,23 @@ def validate_against(ref_path, ids, PM, H1, H2, cos_threshold=0.99):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--output-root", default=os.path.join(HERE, "_output"),
+    ap.add_argument(
+        "--output-root",
+        default=os.path.join(REPO_ROOT, "data", "peptide_systems", "boltz", "outputs"),
                     help="boltz output root containing <system>/ subdirs")
-    ap.add_argument("--manifest", default=os.path.join(HERE, "boltz_inputs", "manifest.tsv"))
+    ap.add_argument(
+        "--manifest",
+        default=os.path.join(
+            REPO_ROOT, "data", "peptide_systems", "boltz", "inputs", "manifest.tsv"
+        ),
+    )
     ap.add_argument("--ckpt", default=os.path.expanduser("~/.boltz/boltz2_aff.ckpt"))
-    ap.add_argument("--out-dir", default=os.path.join(HERE, "_affinity_embeddings"))
+    ap.add_argument(
+        "--out-dir",
+        default=os.path.join(
+            REPO_ROOT, "data", "peptide_systems", "modeling", "features", "reconstructed"
+        ),
+    )
     ap.add_argument("--systems", nargs="*", help="subset of system dirs (default: all)")
     ap.add_argument("--binder-side", choices=("auto", "group1", "group2"), default="auto")
     ap.add_argument("--no-manifest", action="store_true",

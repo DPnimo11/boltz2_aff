@@ -11,7 +11,7 @@ peptides on yeast cell surface against one Bcl-2 family protein:
     f100/f100r -> Bfl-1   (100 nM target; only concentration used in the paper)
     pilot_x1/* -> Bcl-xL  (early pilot screen, larger n, noisier)
 
-Output: long-format TSV at data/peptides/bh3/measurements.tsv with one row
+Output: long-format TSV at data/peptides/source/bh3/measurements.tsv with one row
 per (peptide, target, file) measurement. Columns:
 
     target            'Bcl-xL' | 'Mcl-1' | 'Bfl-1'
@@ -43,7 +43,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "papers" / "peptides" / "bh3" / "sortcery_design" / "csv"
-OUT_DIR = REPO_ROOT / "data" / "peptides" / "bh3"
+OUT_DIR = REPO_ROOT / "data" / "peptides" / "source" / "bh3"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,11 @@
+target	n_labels	n_embedding_files	n_scalar_wt	n_scalar_mut	n_scalar_shuffled	n_input_wt	n_input_mut	n_input_shuffled
+ADRA2B	44	13	44	44	44	13	44	44
+CASR	74	74	74	74	74	74	74	74
+CNR1	46	45	46	46	46	46	46	46
+CNR2	60	60	60	60	60	60	60	60
+DRD3	33	33	33	33	33	33	33	33
+DRD4	334	324	334	334	334	334	334	335
+MTR1A	38	36	38	38	38	38	38	38
+ROCK1	69	68	69	69	69	69	69	69
+SC6A4	35	33	36	35	35	35	35	35
+SGMR2	210	205	210	210	210	210	210	210

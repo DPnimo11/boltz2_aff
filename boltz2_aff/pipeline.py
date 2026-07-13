@@ -21,15 +21,22 @@ from boltz2_aff.modeling import boltz_baseline_metrics, train_classifier, train_
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ulvsh-root", type=Path, default=Path("data/ULVSH"))
+    parser.add_argument("--ulvsh-root", type=Path, default=Path("data/ulvsh/source"))
     parser.add_argument(
         "--embedding-root",
         type=Path,
         action="append",
-        default=[Path("targets")],
+        default=[Path("data/ulvsh/modeling/features/boltz_embeddings")],
         help="Root containing affinity_embeddings_*.npz files. Can be repeated.",
     )
-    parser.add_argument("--boltz-output-root", type=Path, default=Path("data/Boltz-2"))
+    parser.add_argument(
+        "--boltz-scalar-source",
+        "--boltz-output-root",
+        dest="boltz_scalar_source",
+        type=Path,
+        default=Path("data/ulvsh/modeling/features/boltz_scalars.tsv"),
+        help="Compact scalar TSV (preferred) or a legacy Boltz output root.",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("runs/latest"))
     parser.add_argument("--targets", nargs="*", default=None, help="Optional ULVSH target names.")
     parser.add_argument("--variants", nargs="*", default=None, help="Optional Boltz variants, e.g. wt mut shuffled.")
@@ -75,7 +82,7 @@ def _merge_features(
         frame = labels.merge(embeddings, on=["target", "ligand_id"], how="inner")
     elif needs_boltz:
         if boltz_scalars.empty:
-            raise ValueError("no Boltz affinity JSON files were found for the requested selection")
+            raise ValueError("no Boltz scalar records were found for the requested selection")
         frame = labels.merge(boltz_scalars, on=["target", "ligand_id"], how="inner")
     else:
         frame = labels.copy()
@@ -128,7 +135,7 @@ def _write_manifest(
     manifest = {
         "ulvsh_root": str(args.ulvsh_root),
         "embedding_roots": [str(path) for path in embedding_roots],
-        "boltz_output_root": str(args.boltz_output_root),
+        "boltz_scalar_source": str(args.boltz_scalar_source),
         "feature_set": args.feature_set,
         "embedding_keys": args.embedding_keys,
         "targets_requested": args.targets,
@@ -152,12 +159,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     model_dir = out_dir / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    embedding_roots = list(dict.fromkeys([*args.embedding_root, args.boltz_output_root]))
+    embedding_roots = list(dict.fromkeys(args.embedding_root))
     labels = load_ulvsh(args.ulvsh_root, args.targets, args.score_source, include_scores=True)
     embeddings = discover_embedding_frame(
         embedding_roots, args.targets, args.variants, embedding_keys=args.embedding_keys
     )
-    boltz_scalars = discover_boltz_scalar_frame(args.boltz_output_root, args.targets, args.variants)
+    boltz_scalars = discover_boltz_scalar_frame(
+        args.boltz_scalar_source, args.targets, args.variants
+    )
     frame = _merge_features(labels, embeddings, boltz_scalars, args.feature_set)
     frame["group_id"] = frame["target"].astype(str) + "::" + frame["ligand_id"].astype(str)
 

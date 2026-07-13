@@ -1,9 +1,9 @@
 """Generate Boltz-2 cofolding input YAMLs for the p53 peptide system.
 
 For every (peptide_seq, receptor) pair that appears in
-``data/peptides/p53/measurements.tsv`` we emit one YAML at:
+``data/peptides/source/p53/measurements.tsv`` we emit one YAML at:
 
-    data/Boltz-2/peptides/p53/<receptor>/input/<peptide_id>.yaml
+    data/peptides/boltz/inputs/p53/<receptor>/input/<peptide_id>.yaml
 
 Receptor names map to the *synthetic* binding-domain constructs used by
 Pazgier 2009 / Li 2010 (the source of the Kd values):
@@ -27,8 +27,8 @@ import csv
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC = REPO_ROOT / "data" / "peptides" / "p53" / "measurements.tsv"
-OUT_ROOT = REPO_ROOT / "data" / "Boltz-2" / "peptides" / "p53"
+SRC = REPO_ROOT / "data" / "peptides" / "source" / "p53" / "measurements.tsv"
+OUT_ROOT = REPO_ROOT / "data" / "peptides" / "boltz" / "inputs" / "p53"
 
 
 # Synthetic MDM2 / MDMX binding-domain constructs used by Pazgier 2009 and

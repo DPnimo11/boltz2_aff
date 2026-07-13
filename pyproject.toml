@@ -20,3 +20,4 @@ include = ["boltz2_aff*"]
 
 [project.scripts]
 boltz2-affinity = "boltz2_aff.pipeline:main"
+boltz2-peptide-modeling = "boltz2_aff.peptide_pipeline:main"

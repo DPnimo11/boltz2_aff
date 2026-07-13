@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# SLURM options:
+#SBATCH --job-name=Boltz2      # Job name
+#SBATCH --output=Boltz2.log    # Std out and err
+#SBATCH --licenses=sps         # Storage and licenses declaration
+#SBATCH --partition gpu        # Partition choice
+#SBATCH --gres=gpu:v100:1      # GPU selection
+#SBATCH --ntasks=1
+#SBATCH --mem=32G
+#SBATCH --time=0-04:00:00 
+
+# Boltz2 settings
+. /sps/lit/progs/mamba/etc/profile.d/conda.sh
+. /sps/lit/progs/mamba/etc/profile.d/mamba.sh
+conda activate boltz2
+
+unset LD_LIBRARY_PATH
+unset PYTHONPATH
+
+dir='/sps/lit/didier/test/Boltz/'
+boltz predict ${dir}/input --cache ${dir} --output_format pdb --use_msa_server 

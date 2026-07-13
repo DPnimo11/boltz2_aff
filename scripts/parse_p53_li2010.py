@@ -1,10 +1,10 @@
 """Transcribe Tables 1 and 3 from Li, Pazgier et al. J Mol Biol 2010
 (PMC2856455, PMID 20226197) into a clean TSV at
-``data/peptides/p53/measurements.tsv``.
+``data/peptides/source/p53/measurements.tsv``.
 
 The source tables are rendered as images inside the PDF and cannot be
 extracted with pdf-text tools - rendered crops are checked into
-``data/peptides/p53/raw/`` for reference. The numeric values here were
+``data/peptides/source/p53/raw/`` for reference. The numeric values here were
 transcribed once from those rendered tables.
 
 Two peptide scaffolds, two receptors each:
@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = REPO_ROOT / "data" / "peptides" / "p53"
+OUT_DIR = REPO_ROOT / "data" / "peptides" / "source" / "p53"
 
 
 @dataclass(frozen=True)

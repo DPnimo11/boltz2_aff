@@ -3,17 +3,18 @@ under peptide mutation?
 
 This is the *embedding-geometry* half of Part 2 — it needs no measured
 affinities, only the extracted ``affinity_*.npz`` files under
-``targets/peptides/<system>__<receptor>/``. It answers the question the Rognan
+``data/peptides/modeling/features/boltz_embeddings/<system>__<receptor>/``. It
+answers the question the Rognan
 paper raised (Boltz-2 affinity is largely insensitive to binding-site
 mutations) on the *ligand* side: if the representation feeding the scalar
 heads barely changes across a mutational series, the scalar prediction cannot
 track the mutation either.
 
 It does NOT compute within-series Spearman or ΔΔG-sign agreement — those need
-``data/peptides/<system>/measurements.tsv`` (kd_M / ddG columns) and, for BH3,
-``peptide_index.tsv`` to map opaque ``bh3_NNNN`` ids to sequences. Neither is
-present on this checkout, so this script reports only what the embeddings
-support, plus a QC summary (counts, dims, degeneracy check).
+``data/peptides/source/<system>/measurements.tsv`` (kd_M / ddG columns) and, for BH3,
+``peptide_index.tsv`` to map opaque ``bh3_NNNN`` ids to sequences. This script
+deliberately remains label-free and reports only what the embeddings support,
+plus a QC summary (counts, dims, degeneracy check).
 
 Each npz holds: pair_mean (128), head_ens1 (384), head_ens2 (384),
 head_mean (384), peptide_id, target. ``head_mean`` is the ensemble-averaged
@@ -29,7 +30,9 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PEPTIDE_ROOT = REPO_ROOT / "targets" / "peptides"
+PEPTIDE_ROOT = (
+    REPO_ROOT / "data" / "peptides" / "modeling" / "features" / "boltz_embeddings"
+)
 OUT_DIR = REPO_ROOT / "runs" / "peptide_embeddings"
 
 # Representation used for the sensitivity probe. head_mean = ensemble-averaged

@@ -1,9 +1,10 @@
 """Part 2: does Boltz-2 (via its affinity embeddings) track peptide mutational
 effects on binding?
 
-Joins the extracted embeddings under ``targets/peptides/<system>__<receptor>/``
+Joins the extracted embeddings under
+``data/peptides/modeling/features/boltz_embeddings/<system>__<receptor>/``
 to the measured affinity tables in
-``data/Boltz-2/peptides/<system>/<receptor>/manifest.tsv`` (regenerate those
+``data/peptides/boltz/inputs/<system>/<receptor>/manifest.tsv`` (regenerate those
 with ``make_boltz_inputs_{bh3,p53}.py`` if absent) and runs the two evaluations
 Part 2 calls for: within-series rank correlation and ΔΔG-sign agreement.
 
@@ -43,8 +44,10 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PEPTIDE_EMB_ROOT = REPO_ROOT / "targets" / "peptides"
-LABEL_ROOT = REPO_ROOT / "data" / "Boltz-2" / "peptides"
+PEPTIDE_EMB_ROOT = (
+    REPO_ROOT / "data" / "peptides" / "modeling" / "features" / "boltz_embeddings"
+)
+LABEL_ROOT = REPO_ROOT / "data" / "peptides" / "boltz" / "inputs"
 OUT_DIR = REPO_ROOT / "runs" / "peptide_embeddings"
 
 EMB_KEY = "head_mean"

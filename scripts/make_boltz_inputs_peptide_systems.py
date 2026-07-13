@@ -1,6 +1,6 @@
 """Generate mutation-resolved Boltz cofolding inputs for the SKEMPI subset.
 
-The source bundles live under ``data/peptide_systems/systems/<PDB>/``.  Each
+The source bundles live under ``data/peptide_systems/source/<PDB>/``.  Each
 bundle provides chain sequences in ``<PDB>.fasta`` and experimental variants
 in one curated ``<PDB>_<group1>_<group2>_New.txt`` table.
 
@@ -39,8 +39,8 @@ from typing import Iterable, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SYSTEMS_ROOT = REPO_ROOT / "data" / "peptide_systems" / "systems"
-DEFAULT_OUT_ROOT = REPO_ROOT / "data" / "peptide_systems" / "boltz_inputs"
+DEFAULT_SYSTEMS_ROOT = REPO_ROOT / "data" / "peptide_systems" / "source"
+DEFAULT_OUT_ROOT = REPO_ROOT / "data" / "peptide_systems" / "boltz" / "inputs"
 
 AA = frozenset("ACDEFGHIKLMNPQRSTVWY")
 THREE_TO_ONE = {

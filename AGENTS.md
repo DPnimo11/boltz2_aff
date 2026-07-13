@@ -21,16 +21,16 @@ across 10 targets of 0.763.
   - `modeling.py` — `train_classifier`, `train_regressor`,
     `_screening_auc`, `boltz_baseline_metrics`.
   - `pipeline.py` — CLI driver.
+  - `peptide_pipeline.py` — active Part-2 validated loader and per-system
+    nested-CV Ridge modeling CLI.
 - `scripts/sweep_embedding_keys.py` — embedding-component sweep harness.
 - `scripts/make_boltz_inputs_peptide_systems.py` — active Part-2 generator;
   applies curated mutations to the measured FASTA chain groups, deduplicates
   structures without dropping repeated measurements, and writes Boltz YAMLs
-  plus manifests under `data/peptide_systems/boltz_inputs/`.
+  plus manifests under `data/peptide_systems/boltz/inputs/`.
 - `scripts/_build_aff_emb.py` — post-hoc Part-2 embedding reconstruction from
   saved trunk `z`; pools an explicit binder-chain-group/partner interface and
   applies the two checkpoint affinity MLPs.
-- `docs/peptide_systems_log.md` — active Part-2 implementation/audit log and
-  unresolved execution/modeling issues.
 - `scripts/analyze_peptide_embeddings.py` — label-free Part-2 diagnostic
   (embedding shift under mutation; QC of the extracted set).
 - `scripts/part2_analysis.py` — Part-2 within-series Spearman / ΔΔG-magnitude
@@ -43,23 +43,28 @@ across 10 targets of 0.763.
 
 ## Current Data Layout
 
-- `data/ULVSH/<target>/raw/vitro.tsv` contains labels: ligand ID,
+- `data/ulvsh/source/<target>/raw/vitro.tsv` contains labels: ligand ID,
   target-specific affinity/activity measurement, and active/inactive status.
-- `data/ULVSH/<target>/raw/scores.tsv` contains the original ULVSH docking and
+- `data/ulvsh/source/<target>/raw/scores.tsv` contains the original ULVSH docking and
   physics score features.
-- `data/Boltz-2/<target>/<variant>/output/<ligand>/affinity_<ligand>.json`
-  contains scalar Boltz affinity predictions (used for the raw-Boltz baseline).
-- Future Boltz embedding exports should appear as
-  `affinity_embeddings_<ligand>.npz` next to the scalar affinity JSON.
-- The currently available extracted embedding set is
-  `targets/ROCK1/affinity_embeddings_*.npz` (68 of 69 ROCK1 ligands; `mol_44`
-  is missing).
+- `data/ulvsh/modeling/features/boltz_scalars.tsv` contains all six scalar
+  affinity fields from the transferred paper/reference run. The original
+  5.7 GB output tree was removed after exact record-level validation. The
+  table has 2,830 unique `(target, variant, ligand_id)` rows; consolidation
+  corrected 74 CASR shuffled records stored under the transferred typo
+  `shuffled/ouput/`, which the legacy path inference had mislabeled as WT.
+- Part-1 affinity embeddings produced with the modified exporter live under
+  `data/ulvsh/modeling/features/boltz_embeddings/<target>/`. ROCK1 has 68 of
+  69 ligands; `mol_44` is missing.
+- `data/ulvsh/modeling/{labels.tsv,manifest.tsv}` provides normalized labels
+  and per-target feature/input coverage. The transferred reference YAMLs and
+  job file live locally under `data/ulvsh/reference_boltz/`.
 - **Active Part 2:** source bundles live under
-  `data/peptide_systems/systems/<PDB>/`; generated sequence-only Boltz inputs
+  `data/peptide_systems/source/<PDB>/`; generated sequence-only Boltz inputs
   and one-to-many measurement manifests live under
-  `data/peptide_systems/boltz_inputs/<system>/`.
-- **Active Part-2 modeling bundle:**
-  `data/peptide_systems/modeling_bundle/` contains all 1,705 consolidated
+  `data/peptide_systems/boltz/inputs/<system>/`.
+- **Active Part-2 modeling dataset:**
+  `data/peptide_systems/modeling/` contains all 1,705 consolidated
   `pair_mean`/head embeddings, labels, raw observations, row index, manifest,
   and modeling context. It is complete for the primary embedding-versus-ΔΔG
   analysis and was audited on 2026-07-10. `index.tsv` matches NPZ order;
@@ -67,8 +72,9 @@ across 10 targets of 0.763.
   row position.
 - **BH3/p53 Part 2 (on hold):** source papers remain under
   `papers/peptides/{bh3,p53,p53_2,HLA_A0201}/`, parsed tables under
-  `data/peptides/<system>/`, and the 2,139 previously extracted embeddings under
-  `targets/peptides/`. They use the newer `pair_mean`/`head_mean` export schema
+  `data/peptides/source/<system>/`, and the 2,139 previously extracted embeddings under
+  `data/peptides/modeling/features/boltz_embeddings/`. They use the newer
+  `pair_mean`/`head_mean` export schema
   and are deliberately not discovered by the Part-1 pipeline.
 
 ## `data/peptide_systems/` — active Part-2 system set (updated 2026-07-10)
@@ -80,12 +86,12 @@ as the active Part-2 direction.
 
 ### Source layout
 
-Each bundle is isolated under `data/peptide_systems/systems/<PDB>/`. The curated
+Each bundle is isolated under `data/peptide_systems/source/<PDB>/`. The curated
 filename stem `<PDB>_<grp1>_<grp2>` identifies the two measured partner chain
 groups (for example `2B2X_HL_A` is antibody chains H+L against chain A).
 
 - `<PDB>.pdb` — source complex structure.
-- `<PDB>.fasta` — chain sequences regenerated by the tracked `systems/bat` csh
+- `<PDB>.fasta` — chain sequences regenerated by the tracked `source/bat` csh
   helper via `pdb2fasta`.
 - `<PDB>.mapping` — `RESNAME CHAIN PDBNUM SEQIDX`; mutation numbers match
   **field 4 `SEQIDX`**, not field 3 `PDBNUM`.
@@ -137,13 +143,13 @@ WT complexes, derived from 2,123 mutant measurement rows. There are 431
 measurement rows beyond the unique-mutant count, 296 unique mutants with
 repeated measurements, and 620 unique multi-mutants.
 
-Per system, `data/peptide_systems/boltz_inputs/<system>/` contains:
+Per system, `data/peptide_systems/boltz/inputs/<system>/` contains:
 
 - `input/<input_id>.yaml` — one sequence-only cofold per unique mutation set.
 - `variants.tsv` — one row per YAML, including replicate count and median/mean/
   spread of ΔΔG.
 - `measurements.tsv` — every original curated observation mapped to `input_id`.
-- The parent `boltz_inputs/manifest.tsv` summarizes counts and chain decisions.
+- The parent `boltz/inputs/manifest.tsv` summarizes counts and chain decisions.
 
 Every generated protein entry has `msa: empty`; single-sequence execution is an
 intentional and resolved part of the experiment.
@@ -173,7 +179,7 @@ The completed production extraction bypassed that direct-path limitation. The
 structure path ran for all 1,705 inputs and retained the trunk pair tensor `z`;
 the tracked `scripts/_build_aff_emb.py` then pooled the intended interface and
 applied the two affinity MLPs post hoc. The consolidated result is
-`data/peptide_systems/modeling_bundle/affinity_embeddings.npz` with normalized
+`data/peptide_systems/modeling/features/boltz_embeddings.npz` with normalized
 keys `ids`, `target`, `pair_mean`, `head_ens1`, `head_ens2`, and `head_mean`.
 Effective auto-selected binders are 1A22=A, 1AO7=DE, 1BRS=D, 1CHO=I, 1GC1=C,
 1JTG=B, 1VFB=C, 2B2X=A, 3BT1=A, 3HFM=Y, 3S9D=A, 3SE3=B, and 4G0N=B.
@@ -186,7 +192,19 @@ per-system `measurements.tsv` files; `manifest.tsv` is the top-level generated
 system manifest; `index.tsv` is a human-readable NPZ row map derived from
 `ids`. `measurements.tsv` is not a second experimental dataset.
 
-The bundle was produced with `_build_aff_emb.py`'s default compatibility mode,
+The transferred modeling dataset passed these one-time validation checks:
+all 1,705 finite, unique embedding IDs join exactly to 1,705 labels; every
+system has one WT; `index.tsv` reproduces NPZ order; all 2,136 observations
+recompute the stored replicate summaries; and all manifest counts recompute.
+Repeated experimental rows are intentional provenance rather than duplicate
+features: 292 mutation-label groups repeat, 280 have differing mutant Kd, 250
+use differing WT references, and 286 have differing delta-delta-G. Only six
+groups are identical across all affinity fields, with four additional aliases
+that differ only in multi-mutation token order. Keep one feature row per
+`input_id`, retain every observation, and aggregate labels on the free-energy
+scale.
+
+The dataset was produced with `_build_aff_emb.py`'s default compatibility mode,
 which omits the affinity MLP's trailing ReLU. Thus its `head_*` values are
 pre-final-ReLU (negative values are expected), not the fork writer's exact
 post-ReLU `g_head`. Apply ReLU to each ensemble head separately before
@@ -199,12 +217,12 @@ out-of-domain affinity representations still encode protein-interface mutation
 effects.
 
 A normalized-schema producer is now present as `scripts/_build_aff_emb.py`, so
-the active bundle's `pair_mean`/head construction is locally specified even
+the active dataset's `pair_mean`/head construction is locally specified even
 though the exact historical BH3/p53 producer is not needed for the active
 direction. The saved trunk tensors, structures, confidence JSONs, checkpoint,
 and full production run log remain on the execution machine rather than in the
-modeling bundle. Raw Boltz scalar affinity outputs were not included, so the
-bundle alone does not support the raw-scalar baseline or re-pooling with
+modeling dataset. Raw Boltz scalar affinity outputs were not included, so the
+dataset alone does not support the raw-scalar baseline or re-pooling with
 another binder choice.
 
 ### Intended per-system modeling
@@ -213,7 +231,7 @@ Build one model per system, analogous to Part 1 but with continuous ΔΔG as the
 primary task. Use one row per unique `input_id`, median ΔΔG as the primary label,
 and retain replicate count/spread for uncertainty analysis. Compare a simple
 mutation baseline against Boltz embeddings and their combination; later add
-LRIP interaction-energy features by joining on `(system, input_id)`. The bundle
+LRIP interaction-energy features by joining on `(system, input_id)`. The dataset
 is ready for that combined modeling step once LRIP features exist, but it does
 not contain the poses/MM-GBSA outputs needed to generate LRIP. Prefer
 WT-difference embeddings and strongly regularized Ridge/PLS with nested CV
@@ -222,8 +240,23 @@ Headline metrics are out-of-fold Spearman and ΔΔG-sign agreement, with MAE and
 Pearson secondary. A position-held-out split is a stricter follow-up for
 overlapping multi-mutants.
 
-See `docs/peptide_systems_log.md` for the per-system generation table, repeated-
-measurement audit, validation record, and all unresolved downstream issues.
+The initial implementation is `python -m boltz2_aff.peptide_pipeline`. It
+validates the NPZ/index/label/measurement joins, uses WT only to construct
+difference embeddings, evaluates mutants with nested random-variant CV, and
+writes tidy out-of-fold predictions/metrics plus final Ridge models. Default
+views are mutation-only, `pair_mean`, mutation+`pair_mean`, `head_mean`, and
+mutation+`head_mean`; `--label mean` provides the mean-label sensitivity pass.
+Inner CV selects Ridge alpha by MAE. Position-held-out CV, PLS, censor-aware
+regression, replicate weighting, and LRIP joins remain follow-ups.
+
+For per-system linear Ridge with an intercept, subtracting the same WT vector
+from every mutant is only an affine translation of raw embeddings. Keep the
+explicit delta representation for interpretation and future nonlinear or
+cross-system work, but do not claim raw-vs-delta Ridge as distinct signal.
+
+The exact modeling-file contract and transfer validation record are in
+`data/peptide_systems/modeling/README.md`; per-system counts are in its
+`manifest.tsv`.
 
 ## Embedding Provenance
 
@@ -330,7 +363,8 @@ python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_swee
 
 ## Multi-Target Sweep Findings (2026-05-17, updated 2026-05-20)
 
-All 10 targets have embeddings under `targets/`. The definitive sweep results
+All 10 targets have embeddings under
+`data/ulvsh/modeling/features/boltz_embeddings/`. The definitive sweep results
 are in `runs/sweep_embeddings_v2/` and `runs/sweep_combined_v2/` (RF classifier,
 no PCA). Earlier `sweep_embeddings/` and `sweep_combined/` used RF+adaptive PCA
 and are now superseded.
@@ -592,7 +626,7 @@ Kds.
 
 Two ingestion scripts and their outputs:
 
-- `scripts/parse_bh3_sortcery.py` → `data/peptides/bh3/measurements.tsv`
+- `scripts/parse_bh3_sortcery.py` → `data/peptides/source/bh3/measurements.tsv`
   (27,499 long-format rows across 10 SORTCERY CSVs). Per-target unique
   peptide counts: Bcl-xL 10,142 (includes pilot screen), Mcl-1 4,491,
   Bfl-1 3,805. All rows pass `is_unimodal=True / is_one_hit_wonder=False`
@@ -601,11 +635,11 @@ Two ingestion scripts and their outputs:
   sign convention is *higher = tighter* — confirm against the SORTCERY
   paper before using absolute values).
 
-- `scripts/parse_p53_li2010.py` → `data/peptides/p53/measurements.tsv`
+- `scripts/parse_p53_li2010.py` → `data/peptides/source/p53/measurements.tsv`
   (72 rows = 2 scaffolds × 2 receptors × 18 peptide entries). The script
   encodes Li 2010 Tables 1 and 3 as Python literals because both tables
   are rendered as raster images in the PDF (PNG crops kept under
-  `data/peptides/p53/raw/` for audit). PMI/MDM2 dynamic range is 5.5
+  `data/peptides/source/p53/raw/` for audit). PMI/MDM2 dynamic range is 5.5
   log-units (490 pM → 160 μM); the (17–28)p53/MDMX series is the narrowest
   at ≈2.9 log-units. F19A and W23A on the p53 scaffold are tagged
   `analog_class='not_determined'` (SPR could not quantify; excluded from
@@ -624,12 +658,12 @@ threshold.
 Two YAML generator scripts emit one cofolding input per (peptide, receptor)
 pair. Layout:
 
-    data/Boltz-2/peptides/<system>/<receptor>/input/<peptide_id>.yaml
-    data/Boltz-2/peptides/<system>/<receptor>/manifest.tsv
-    data/Boltz-2/peptides/bh3/peptide_index.tsv  # global peptide_id <-> seq map
+    data/peptides/boltz/inputs/<system>/<receptor>/input/<peptide_id>.yaml
+    data/peptides/boltz/inputs/<system>/<receptor>/manifest.tsv
+    data/peptides/boltz/inputs/bh3/peptide_index.tsv  # global peptide_id <-> seq map
 
 Each YAML follows the existing Boltz-2 convention used by ROCK1
-(`data/Boltz-2/ROCK1/{wt,mut,shuffled}/input/mol_NN.yaml`): two
+(`data/ulvsh/reference_boltz/inputs/ROCK1/{wt,mut,shuffled}/mol_NN.yaml`): two
 `protein` chains (`id: A` = receptor, `id: B` = peptide ligand) and
 `properties.affinity.binder: B`. Peptides are encoded as protein chains
 rather than as `ligand: smiles:` because they are too long for the
@@ -695,7 +729,8 @@ later without a rewrite. Do not couple them.
 ### Part 2 first results (2026-05-22)
 
 Embeddings for all 2139 cofolded peptide complexes were extracted (Option A,
-re-cofold per variant) and filed under `targets/peptides/<system>__<receptor>/`.
+re-cofold per variant) and filed under
+`data/peptides/modeling/features/boltz_embeddings/<system>__<receptor>/`.
 Two analyses were run; outputs in `runs/peptide_embeddings/`. Both use
 `head_mean` (the ensemble-averaged representation immediately before the scalar
 affinity heads).
@@ -741,7 +776,7 @@ question is whether Boltz-2's *own scalar output* preserves it.
    baseline (B2-A / B2-C), the apples-to-apples Rognan comparison the
    embedding-model arm cannot make. The *analysis* is done and verified
    (`scripts/part2_raw_boltz_baseline.py`, smoke-tested on synthetic JSONs); it
-   reads `data/Boltz-2/peptides/<system>/<receptor>/output/<pid>/affinity_<pid>.json`
+   reads `data/peptides/boltz/outputs/<system>/<receptor>/<pid>/affinity_<pid>.json`
    (Part-1 schema: `affinity_pred_value` lower=stronger, `affinity_probability_binary`
    higher=stronger), joins to the manifests, and prints raw-Boltz vs the
    embedding arm side by side. The only thing left is **running Boltz-2 over the

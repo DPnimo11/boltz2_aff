@@ -124,7 +124,7 @@ def replicate_ceiling() -> dict[str, dict]:
     # main sort, but the replicate is 1 nM only — pooling concentrations
     # deflates the ceiling, so test-retest must be computed within concentration.
     buckets: dict[tuple, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-    with (LABEL_ROOT.parent.parent / "peptides" / "bh3" / "measurements.tsv").open(
+    with (LABEL_ROOT.parents[1] / "source" / "bh3" / "measurements.tsv").open(
             encoding="utf-8") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
             if row["is_pilot"] == "True" or row["peptide_seq"] not in cross_seqs:

@@ -9,10 +9,9 @@ the embeddings survives into the published scalar.
 Requires the peptide cofolding to have been run. The 2139 input YAMLs already
 exist (`scripts/make_boltz_inputs_{bh3,p53}.py`); running Boltz-2 over them is an
 external GPU job (same pipeline / `../boltz` fork that produced Part 1's JSONs).
-Expected output, mirroring the Part-1 layout
-(`data/Boltz-2/<target>/<variant>/output/<ligand>/affinity_<ligand>.json`):
+Expected output:
 
-    data/Boltz-2/peptides/<system>/<receptor>/output/<peptide_id>/affinity_<peptide_id>.json
+    data/peptides/boltz/outputs/<system>/<receptor>/<peptide_id>/affinity_<peptide_id>.json
 
 with fields `affinity_pred_value` (B2-A, lower = stronger binder) and
 `affinity_probability_binary` (B2-C, 0-1, higher = stronger). When no JSONs are
@@ -33,7 +32,8 @@ import numpy as np
 from scipy.stats import spearmanr
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LABEL_ROOT = REPO_ROOT / "data" / "Boltz-2" / "peptides"
+LABEL_ROOT = REPO_ROOT / "data" / "peptides" / "boltz" / "inputs"
+BOLTZ_OUTPUT_ROOT = REPO_ROOT / "data" / "peptides" / "boltz" / "outputs"
 EMB_RESULTS = REPO_ROOT / "runs" / "peptide_embeddings" / "part2_results.json"
 OUT_DIR = REPO_ROOT / "runs" / "peptide_embeddings"
 BH3_RECEPTORS = ("Bcl-xL", "Mcl-1", "Bfl-1")
@@ -47,7 +47,7 @@ def _read_tsv(path: Path) -> list[dict[str, str]]:
 
 def load_raw_scalars(system: str, receptor: str) -> dict[str, dict[str, float]]:
     """peptide_id -> {score_A, score_C} from the cofolded affinity JSONs."""
-    base = LABEL_ROOT / system / receptor
+    base = BOLTZ_OUTPUT_ROOT / system / receptor
     out: dict[str, dict[str, float]] = {}
     for path in sorted(base.rglob("affinity_*.json")):
         if path.name.startswith("confidence_") or path.parent.name == "input":
@@ -155,9 +155,9 @@ def main() -> int:
     if not found:
         print("No peptide affinity JSONs found yet.\n")
         print("The raw-Boltz scalar baseline needs the cofolding to have been run.")
-        print("Inputs are ready (2139 YAMLs under data/Boltz-2/peptides/*/*/input/).")
+        print("Inputs are ready under data/peptides/boltz/inputs/*/*/input/.")
         print("Run Boltz-2 over them (external GPU job, ../boltz fork) so outputs land at:")
-        print("  data/Boltz-2/peptides/<system>/<receptor>/output/<pid>/affinity_<pid>.json")
+        print("  data/peptides/boltz/outputs/<system>/<receptor>/<pid>/affinity_<pid>.json")
         print("then re-run this script - it will compute B2-A / B2-C within-series")
         print("Spearman + ddG-sign and compare against the embedding-model arm.")
         return 0

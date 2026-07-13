@@ -63,11 +63,17 @@ def _infer_layout(root: Path, path: Path, ligand_id: str) -> tuple[str, str]:
     rel = path.relative_to(root)
     parts = rel.parts
 
-    # data/Boltz-2/<target>/<variant>/output/<ligand>/affinity_embeddings_<ligand>.npz
-    if len(parts) >= 5 and parts[2].lower() == "output":
+    # Reference-run layout: <target>/<variant>/output/<ligand>/<artifact>.
+    # CASR's transferred shuffled run spells the output directory ``ouput``;
+    # the target and variant components are still authoritative.
+    if (
+        len(parts) >= 5
+        and parts[1].lower() in {"wt", "mut", "shuffled"}
+        and parts[2].lower() in {"output", "ouput"}
+    ):
         return parts[0], parts[1]
 
-    # targets/<target>/affinity_embeddings_<ligand>.npz
+    # <embedding root>/<target>/affinity_embeddings_<ligand>.npz
     if len(parts) >= 2:
         return parts[0], "wt"
 
@@ -141,24 +147,43 @@ def discover_embedding_frame(
 
 
 def discover_boltz_scalar_frame(
-    boltz_output_root: Path,
+    boltz_source: Path,
     targets: Iterable[str] | None = None,
     variants: Iterable[str] | None = None,
 ) -> pd.DataFrame:
-    """Load scalar affinity JSON predictions from Boltz output folders."""
+    """Load scalar predictions from a compact TSV or legacy output folders."""
 
-    if not boltz_output_root.exists():
+    if not boltz_source.exists():
         return pd.DataFrame()
 
     target_filter = _target_filter(targets)
     variant_filter = _variant_filter(variants)
+
+    if boltz_source.is_file():
+        if boltz_source.suffix.lower() != ".tsv":
+            raise ValueError(f"unsupported Boltz scalar table: {boltz_source}")
+        frame = pd.read_csv(boltz_source, sep="\t", float_precision="round_trip")
+        required = {"target", "variant", "ligand_id"}
+        missing = required.difference(frame.columns)
+        if missing:
+            raise ValueError(
+                f"Boltz scalar table {boltz_source} is missing columns: {sorted(missing)}"
+            )
+        if frame.duplicated(["target", "variant", "ligand_id"]).any():
+            raise ValueError(f"Boltz scalar table has duplicate record keys: {boltz_source}")
+        if target_filter:
+            frame = frame[frame["target"].astype(str).str.upper().isin(target_filter)]
+        if variant_filter:
+            frame = frame[frame["variant"].astype(str).str.lower().isin(variant_filter)]
+        return frame.reset_index(drop=True)
+
     rows: list[dict[str, object]] = []
 
-    for path in sorted(boltz_output_root.rglob("affinity_*.json")):
+    for path in sorted(boltz_source.rglob("affinity_*.json")):
         if path.name.startswith("confidence_"):
             continue
         ligand_id = ligand_id_from_affinity_json(path)
-        target, variant = _infer_layout(boltz_output_root, path, ligand_id)
+        target, variant = _infer_layout(boltz_source, path, ligand_id)
         if target_filter and target.upper() not in target_filter:
             continue
         if variant_filter and variant.lower() not in variant_filter:

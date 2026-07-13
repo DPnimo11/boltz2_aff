@@ -10,10 +10,10 @@ peptide sequence and only cover the cross-target peptides.
 
 Output layout (one folder per receptor):
 
-    data/Boltz-2/peptides/bh3/<receptor>/input/<peptide_id>.yaml
-    data/Boltz-2/peptides/bh3/<receptor>/manifest.tsv
+    data/peptides/boltz/inputs/bh3/<receptor>/input/<peptide_id>.yaml
+    data/peptides/boltz/inputs/bh3/<receptor>/manifest.tsv
 
-Plus a global ``data/Boltz-2/peptides/bh3/peptide_index.tsv`` that maps
+Plus a global ``data/peptides/boltz/inputs/bh3/peptide_index.tsv`` that maps
 the canonical peptide_id <-> sequence so the same ID is used across
 receptors.
 
@@ -31,8 +31,8 @@ import csv
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC = REPO_ROOT / "data" / "peptides" / "bh3" / "measurements.tsv"
-OUT_ROOT = REPO_ROOT / "data" / "Boltz-2" / "peptides" / "bh3"
+SRC = REPO_ROOT / "data" / "peptides" / "source" / "bh3" / "measurements.tsv"
+OUT_ROOT = REPO_ROOT / "data" / "peptides" / "boltz" / "inputs" / "bh3"
 
 
 # UniProt SV=1 / SV=3 full-length sequences; slices below are the binding-
@@ -102,7 +102,7 @@ def _load_unique_peptides_per_target() -> dict[str, set[str]]:
     *not* used for the intersection: replicates cover different
     stochastic samples of the library and would inflate the cross-target
     set well beyond the headline ~1.6k. Replicate measurements remain
-    available in ``data/peptides/bh3/measurements.tsv`` for noise
+    available in ``data/peptides/source/bh3/measurements.tsv`` for noise
     estimation downstream.
     """
     out: dict[str, set[str]] = {"Bcl-xL": set(), "Mcl-1": set(), "Bfl-1": set()}
