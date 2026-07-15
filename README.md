@@ -24,9 +24,9 @@ Boltz-2 scalar affinity heads.
   66, 1511-1521. PDF in `papers/`.
 - Boltz-2 model: Passaro et al., *Boltz-2: Towards Accurate and Efficient
   Binding Affinity Prediction*, bioRxiv 2025.06.14.659707. PDF in `papers/`.
-- LRIP / interaction-profile scoring (planned feature set): Ji et al.,
-  *Briefings in Bioinformatics* 22(5) 2021 (`papers/bbab054.pdf`); Niu et al.,
-  LRIP-SF (`papers/aef2177_CombinedPDF_v1.pdf`).
+- LRIP / interaction-profile scoring (feature set, run — see the LRIP results
+  section): Ji et al., *Briefings in Bioinformatics* 22(5) 2021
+  (`papers/bbab054.pdf`); Niu et al., LRIP-SF (`papers/aef2177_CombinedPDF_v1.pdf`).
 
 ## Setup
 
@@ -170,6 +170,34 @@ meaningful signal. The more informative metric is `regression.cv_roc_auc` —
 the screening AUC (train on actives-only rows, rank all test rows against
 `active_bool`) — which reaches 0.84 on ROCK1. See `AGENTS.md` for the full
 per-target breakdown and caveats.
+
+## LRIP Interaction-Profile Feature Set (results, 2026-07-15)
+
+Per-residue ligand–receptor interaction energies (LRIP / IP-SF, Junmei Wang
+lab) for all 10 targets live in `data/ulvsh/modeling/features/lrip/<TARGET>.dat`
+(see that dir's `README.md` for format and join notes). Modeled with the same
+RF / StratifiedGroupKFold / `cv_roc_auc` methodology as the embeddings, and
+compared to the embeddings and raw Boltz on the **same rows**.
+
+```powershell
+# Standalone LRIP vs embeddings vs raw Boltz, per target (runs/lrip/)
+python scripts/model_lrip.py
+# Does LRIP add on top of Boltz? paired increments (runs/lrip_combined/)
+python scripts/model_lrip_combined.py
+```
+
+**Standalone LRIP is a negative:** median classification AUC **0.612**, below
+the embeddings (0.744) and raw Boltz (best-of-B2A/B2C 0.793). It beats raw
+Boltz on 1/10 targets and clears the paper's >0.65 bar on 4/10. ROCK1 is again
+the standout (0.869) — a favorable target, not representative.
+
+**But LRIP carries real signal — it is just redundant with the embeddings.**
+Added to raw Boltz scalars it helps: median AUC 0.666 → **0.699** (+0.057,
+helps 7/10; DRD3 +0.21, MTR1A +0.18). Added on top of the learned stack
+(embeddings + Boltz scalars) it does essentially nothing: 0.748 → **0.750**
+(+0.008, within noise). So Boltz-2's embeddings already subsume the per-residue
+interaction information LRIP computes explicitly. Full breakdown and future
+work in `AGENTS.md`.
 
 ## Peptide Systems (Part 2 — current direction)
 

@@ -515,10 +515,11 @@ noise dimensions only hurts. rdkit dependency also removed from `pyproject.toml`
   ADRA2B/MTR1A fail — may correlate with refolding accuracy discussed in the
   paper.
 
-## Planned: LRIP Interaction-Profile Feature Set
+## LRIP Interaction-Profile Feature Set — Run 2026-07-15
 
-Add a fifth feature block based on **ligand–residue interaction profiles
-(LRIP / IP-SF)** from the Junmei Wang lab:
+A fifth feature block based on **ligand–residue interaction profiles
+(LRIP / IP-SF)** from the Junmei Wang lab, now built and evaluated. Method
+references:
 
 - `papers/bbab054.pdf` — Ji et al., *Briefings in Bioinformatics* 22(5) 2021:
   original IP-SF. Features = per-residue ligand–receptor interaction energies
@@ -530,16 +531,74 @@ Add a fifth feature block based on **ligand–residue interaction profiles
   sensitivity-analysis hotspot framework.
 
 Why it matters here: LRIP is a *physically motivated, mechanistically
-interpretable, target-specific* feature, the natural counterpoint to Boltz-2's
-*learned latent* embeddings. The same per-target pipeline can compare
-`embeddings` vs `lrip` vs `combined+lrip`, and LRIP extends cleanly to
-peptide–protein interfaces (per-residue energies) for Part 2 below.
+interpretable, target-specific* feature — the natural counterpoint to Boltz-2's
+*learned latent* embeddings.
 
-Integration sketch: a `score_lrip_<resid>` column block computed from the
-ULVSH docked/cofolded poses (or Boltz-2 cofolded pose) via MM-GBSA decomposition,
-discovered by `features.py` with an `lrip` / `combined_lrip` feature set. This
-requires a pose + an MM-GBSA decomposition step (Amber/`MMPBSA.py` or
-equivalent) — heavier than current feature blocks; scope before building.
+**Data.** Per-target per-residue interaction-energy matrices (one `<TARGET>.dat`
+per target, rows = compounds, columns = per-residue energies) landed via SFTP in
+`_sftp_lrip/` and were moved to `data/ulvsh/modeling/features/lrip/`. See that
+directory's `README.md` for the `.dat` format and join details. Row ids join
+directly to `labels.tsv` on `(target, ligand_id)` (ROCK1's ULVSH ids are
+themselves `mol_01…mol_69`); two quirks handled by the harness: DRD3 `1_20`→
+`1_2_0`, and ROCK1 `mol_44` absent (LRIP failure). 0 unmatched rows across all
+targets. The compound set per target is the Boltz WT-input subset (`n_input_wt`),
+minus a handful of MM-GBSA failures.
+
+**Harness.** `scripts/model_lrip.py` (standalone LRIP vs embeddings vs raw
+Boltz) and `scripts/model_lrip_combined.py` (paired increments). Both reuse
+`boltz2_aff.modeling.train_classifier` + `boltz_baseline_metrics`, so LRIP uses
+the identical RF → StratifiedGroupKFold → `cv_roc_auc` methodology and is
+compared on the *same rows*. Run with `PYTHONPATH=.`. Outputs in `runs/lrip/`
+and `runs/lrip_combined/` (per-target metrics/predictions/models + `summary.*`).
+
+**Result 1 — standalone LRIP is a negative.** Median classification AUC across
+10 targets: LRIP **0.612** < embeddings 0.744 = B2-A 0.744 < B2-C 0.759 <
+best-of-raw-Boltz 0.793. LRIP beats best raw Boltz on 1/10 (ROCK1), beats
+embeddings on 3/10, clears the paper's >0.65 "acceptable" bar on 4/10 (DRD3,
+ROCK1, SC6A4, SGMR2). ROCK1 is again the standout (0.869) — favorable target,
+not representative. Worst on small-n / anti-correlated targets (CNR1 0.376,
+MTR1A 0.487, ADRA2B n=13 0.528). The IP-SF/LRIP-SF papers' ~0.87 is on curated
+poses/actives; ULVSH is a harder, imbalanced screen on small per-target n.
+
+**Result 2 — LRIP carries real signal but is redundant with the embeddings.**
+Paired increments on identical rows:
+- `boltz` scalars → `boltz + lrip`: median AUC 0.666 → **0.699** (median delta
+  **+0.057**, helps 7/10; DRD3 +0.21, MTR1A +0.18, SC6A4 +0.09). LRIP adds real
+  binding information beyond the six raw Boltz scalars.
+- `combined` (embeddings + Boltz scalars) → `combined + lrip`: 0.748 → **0.750**
+  (median delta **+0.008**, helps 8/10 but within noise). Once the learned
+  embeddings are present, LRIP adds essentially nothing — the embeddings already
+  subsume the per-residue interaction signal LRIP computes explicitly.
+
+Net reading: consistent with the rest of Part 1 — learned ≈ physics, neither
+clearly wins, and here with a clean mechanistic interpretation (Boltz-2's
+embeddings have already learned the interaction-hotspot information).
+
+### LRIP future work
+
+- **Is the +0.008 combined increment real or noise?** Paired
+  permutation/bootstrap over the per-target deltas (or a sign test across the
+  8/10-positive targets) to put a CI on the increment before claiming any
+  complementarity. This is the honest gate on whether `combined+lrip` is worth
+  reporting as anything but "no effect."
+- **Integrate as a first-class feature set** if pursued further: a
+  `score_lrip_<resid>` column block discovered by `features.py` with `lrip` /
+  `combined_lrip` choices, rather than the standalone scripts. Low priority
+  given Result 2.
+- **Per-target only where LRIP helps.** DRD3, MTR1A, SC6A4, ROCK1 show the
+  largest boltz→+lrip gains; if a mechanistic hotspot story is wanted, these are
+  where LRIP's per-residue interpretability (which residues drive the classifier)
+  would be most informative — tie back to the Niu et al. sensitivity-analysis
+  hotspot framework.
+- **Provenance gap:** the poses/MM-GBSA protocol behind the transferred `.dat`
+  files is not captured in-repo (pose source, minimization, GB model, decomp
+  settings). Record it if these numbers get published; needed to reproduce or
+  extend LRIP to new compounds.
+- **Part 2 extension.** LRIP per-residue energies extend cleanly to
+  peptide–protein interfaces and are especially interpretable there; joinable to
+  `data/peptide_systems/modeling/` by `(system, input_id)` once poses/MM-GBSA
+  exist for that set (see Part 2 sections). Still blocked on generating LRIP for
+  peptides — the transferred ULVSH `.dat` set does not cover it.
 
 ## Planned Part 2: Peptide / Mutation Robustness (BH3 / p53 — on hold)
 
