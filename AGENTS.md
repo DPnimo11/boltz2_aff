@@ -23,7 +23,12 @@ across 10 targets of 0.763.
   - `pipeline.py` — CLI driver.
   - `peptide_pipeline.py` — active Part-2 validated loader and per-system
     nested-CV Ridge modeling CLI.
-- `scripts/sweep_embedding_keys.py` — embedding-component sweep harness.
+- `scripts/sweep_embedding_keys.py` — Part-1 embedding-component sweep harness;
+  `scripts/nested_cv.py` — unbiased nested-CV combo selection.
+- `scripts/model_lrip.py` / `scripts/model_lrip_combined.py` — Part-1 LRIP
+  modeling: standalone LRIP vs embeddings vs raw Boltz, and the "does LRIP add on
+  top of Boltz?" paired increments. Reuse `modeling.train_classifier` /
+  `boltz_baseline_metrics`; run with `PYTHONPATH=.`.
 - `scripts/make_boltz_inputs_peptide_systems.py` — active Part-2 generator;
   applies curated mutations to the measured FASTA chain groups, deduplicates
   structures without dropping repeated measurements, and writes Boltz YAMLs
@@ -56,6 +61,9 @@ across 10 targets of 0.763.
 - Part-1 affinity embeddings produced with the modified exporter live under
   `data/ulvsh/modeling/features/boltz_embeddings/<target>/`. ROCK1 has 68 of
   69 ligands; `mol_44` is missing.
+- `data/ulvsh/modeling/features/lrip/<TARGET>.dat` — per-residue LRIP
+  interaction-energy matrices (one per target; format + join quirks in that
+  dir's `README.md`). See "LRIP Interaction-Profile Feature Set" below.
 - `data/ulvsh/modeling/{labels.tsv,manifest.tsv}` provides normalized labels
   and per-target feature/input coverage. The transferred reference YAMLs and
   job file live locally under `data/ulvsh/reference_boltz/`.
@@ -333,75 +341,36 @@ group-grouped cross-validated metrics. Key fields:
 
 ## Main Commands
 
-Single ROCK1 run (default = embeddings, all four components):
-
 ```powershell
+# Part-1 pipeline: one/several/all targets (omit --targets for all 10)
 python -m boltz2_aff.pipeline --targets ROCK1 --out-dir runs/rock1_embeddings
-```
+python -m boltz2_aff.pipeline --out-dir runs/all_embeddings
 
-Restrict embedding components:
-
-```powershell
-python -m boltz2_aff.pipeline --targets ROCK1 --embedding-keys pair_mean1 --out-dir runs/rock1_pm1
-```
-
-Compare against scalar Boltz or ULVSH scores:
-
-```powershell
-python -m boltz2_aff.pipeline --feature-set boltz --out-dir runs/boltz_scalar
+# Restrict embedding components; compare scalar/scores/combined feature sets
+python -m boltz2_aff.pipeline --embedding-keys pair_mean1 --out-dir runs/pm1
+python -m boltz2_aff.pipeline --feature-set boltz        --out-dir runs/boltz_scalar
 python -m boltz2_aff.pipeline --feature-set ulvsh_scores --out-dir runs/ulvsh_scores
-python -m boltz2_aff.pipeline --feature-set combined --out-dir runs/combined
+python -m boltz2_aff.pipeline --feature-set combined     --out-dir runs/combined
+
+# Embedding-component sweep + unbiased nested CV
+python scripts/sweep_embedding_keys.py --feature-set combined --out-root runs/sweep_combined
+python scripts/nested_cv.py --out runs/nested_cv.json
+
+# LRIP (run with PYTHONPATH=.)
+PYTHONPATH=. python scripts/model_lrip.py
+PYTHONPATH=. python scripts/model_lrip_combined.py
 ```
 
-
-Embedding-component sweep:
-
-```powershell
-python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_sweep
-python scripts/sweep_embedding_keys.py --target ROCK1 --out-root runs/rock1_sweep_combined --feature-set combined
-```
-
-## Multi-Target Sweep Findings (2026-05-17, updated 2026-05-20)
+## Part 1 Classification Results (2026-05-20)
 
 All 10 targets have embeddings under
-`data/ulvsh/modeling/features/boltz_embeddings/`. The definitive sweep results
-are in `runs/sweep_embeddings_v2/` and `runs/sweep_combined_v2/` (RF classifier,
-no PCA). Earlier `sweep_embeddings/` and `sweep_combined/` used RF+adaptive PCA
-and are now superseded.
-
-**Combined feature set (embeddings + Boltz scalars + ULVSH scores), honest
-fixed `pair_mean1` choice, classification AUC vs raw Boltz B2-C:**
-
-| Target | combined | B2C | Result |
-|--------|----------|-----|--------|
-| ADRA2B | 0.319 | 0.611 | loss (n=13, noise) |
-| CASR | 0.789 | 0.645 | **win** |
-| CNR1 | 0.629 | 0.373 | **win** |
-| CNR2 | 0.692 | 0.740 | loss |
-| DRD3 | 0.891 | 0.846 | **win** |
-| DRD4 | 0.741 | 0.723 | **win** |
-| MTR1A | 0.334 | 0.597 | loss (n=36) |
-| ROCK1 | 0.909 | 0.854 | **win** |
-| SC6A4 | 0.852 | 0.827 | **win** |
-| SGMR2 | 0.812 | 0.795 | **win** |
-
-**7/10 targets win; median combined 0.765 vs median B2C 0.732.** Removing the
-adaptive PCA was the decisive change — it recovered ROCK1 from 0.808→0.909 and
-DRD3 from 0.837→0.891, and improved several other targets.
-
-Embeddings only (`pair_mean1` fixed): 3/10 wins, median 0.718 vs B2C 0.732 —
-the additional ULVSH score and Boltz scalar columns in `combined` provide the
-margin that pushes the majority of targets above Boltz-2's own scalar.
-
-Persistent failures — ADRA2B (n=13, essentially noise) and MTR1A (n=36) — are
-likely irreducible at these sample sizes regardless of feature set.
-
-## Nested CV Results (2026-05-20)
-
-`scripts/nested_cv.py` runs outer/inner StratifiedGroupKFold(3) where the inner
-loop selects the best of 9 embedding combos on the training split, and the outer
-fold evaluates the selected combo on held-out data. Also reports fixed `pair_mean1`
-on the same outer folds (exact apples-to-apples). Results in `runs/nested_cv.json`.
+`data/ulvsh/modeling/features/boltz_embeddings/`; sweeps write to
+`runs/sweep_embeddings/` and `runs/sweep_combined/` (RF classifier, no PCA — the
+earlier RF+adaptive-PCA variants are superseded). `scripts/nested_cv.py` is the
+definitive read: outer/inner StratifiedGroupKFold(3) with the inner loop
+selecting the best of 9 embedding combos on the training split, plus fixed
+`pair_mean1` on the same outer folds (apples-to-apples). Results in
+`runs/nested_cv.json`.
 
 | Target | nested | fixed_pm1 | B2C | n |
 |--------|--------|-----------|-----|---|
@@ -417,10 +386,15 @@ on the same outer folds (exact apples-to-apples). Results in `runs/nested_cv.jso
 | SGMR2 | 0.798 | 0.803 | 0.795 | 205 |
 | **Median** | **0.798** | **0.803** | **0.740** | |
 
-**Nested > B2C: 8/10**; median 0.798 vs 0.740. The post-hoc sweep bias was small
-— nested CV confirms the result and adds value on CNR2 (0.636→0.782) where
-inner-fold combo selection picks a better component than pair_mean1.
-Failures: DRD3 (embedding noise at n=32) and MTR1A (n=36, genuine hard case).
+**Honest reading:** the combined/embedding models
+beat raw **B2-C** on 8/10 (median 0.798 vs 0.740), but B2-C is not the whole raw
+story — against the *better* of B2-A/B2-C per target (median ~0.77) the aggregate
+margin largely disappears. The learned embeddings ≈ raw Boltz-2, not a decisive
+win. Removing adaptive PCA was the decisive modeling change (recovered ROCK1
+0.808→~0.90). ROCK1 is a favorable, unrepresentative target; persistent failures
+at tiny n are ADRA2B (n=13, noise) and MTR1A (n=36). There is no universal best
+embedding component, but `pair_mean1` is a reasonable fixed default; inner-fold
+selection adds value mainly on CNR2 (0.636→0.782).
 
 Regression is effectively broken outside ROCK1:
 
@@ -480,40 +454,24 @@ reasonable fixed choice and wins on ROCK1, DRD3, CASR, CNR1 as headline cases.
   heterogeneity. CNR2 is anti-correlated. Use `regression.cv_roc_auc` (screening
   AUC) as the primary regression metric, not Pearson.
 
-## Morgan Fingerprint (ECFP4) Feature Block — Added and Removed 2026-05-20
-
-ECFP4 fingerprints (radius=2, 2048-bit, from `poses.mol2` via RDKit) were
-implemented as `ligand` and `combined_ligand` feature sets and subsequently
-**removed**. Results on ROCK1: `ligand` only AUC 0.786, `combined_ligand` 0.799
-— both below `combined` without fingerprints (0.909) and raw B2-C (0.854).
-B2-C already encodes the ligand pharmacophore that ECFP4 captures; adding 2048
-noise dimensions only hurts. rdkit dependency also removed from `pyproject.toml`.
+**Dead-end tried and removed (2026-05-20):** ECFP4 Morgan fingerprints
+(2048-bit, from `poses.mol2`) as `ligand` / `combined_ligand` feature sets. On
+ROCK1, `ligand` 0.786 / `combined_ligand` 0.799 — both below `combined` without
+them and below raw B2-C. B2-C already encodes the ligand pharmacophore; 2048
+noise dims only hurt. Feature sets and the rdkit dependency were removed.
 
 ## Possible Next Steps
 
-- **[done 2026-05-19]** Replace `LogisticRegression` with `RandomForestClassifier`
-  + adaptive PCA in `modeling.py`; add residual regression mode.
-- **[done 2026-05-20]** Add ECFP4 Morgan fingerprint feature block (`ligand` /
-  `combined_ligand` feature sets); confirms ligand-centrism hypothesis.
-- **[done 2026-05-20]** Remove adaptive PCA from RF classifier; re-run 10-target
-  sweep. Combined+pair_mean1 now wins 7/10 targets, median AUC 0.765 vs B2C
-  0.732 (`runs/sweep_embeddings_v2/`, `runs/sweep_combined_v2/`).
-- **[done 2026-05-20]** Nested CV with inner-fold combo selection
-  (`scripts/nested_cv.py`): 8/10 targets beat B2C, median 0.798 vs 0.740
-  (`runs/nested_cv.json`). Confirms prior sweep result was not optimistically
-  biased — adaptive selection adds further value (especially CNR2: 0.636→0.782).
-- Add nested CV or a held-out test split so per-target combo selection is not
-  optimistically biased; re-evaluate the classification "wins" honestly.
-- Drop regression from the headline; report only as a side result for ROCK1
-  (Pearson ~0.70, screening AUC ~0.84) and CASR (Pearson ~0.50). The training
-  set is all-actives so Pearson is range-restricted; the screening AUC
-  (`regression.cv_roc_auc`) is the meaningful metric. If regression is expanded,
-  Tobit regression for censored inactives is the principled path.
-- Try PLS regression or PCA→ridge to handle p≫n for the `head` components
-  rather than discarding them.
-- Investigate why CASR/DRD3 embeddings beat raw Boltz so decisively but
-  ADRA2B/MTR1A fail — may correlate with refolding accuracy discussed in the
-  paper.
+Part 1 is closed. Live options if it is revisited:
+
+- Regression stays a side result for ROCK1 (screening AUC ~0.84) and CASR only;
+  if expanded, Tobit regression for censored inactives is the principled path
+  (would recover the four all-censored targets). Screening AUC, not Pearson, is
+  the metric.
+- PLS or PCA→Ridge to use the `head` components under p≫n rather than discarding.
+- Why do CASR/DRD3 embeddings beat raw Boltz but ADRA2B/MTR1A fail? May track
+  refolding accuracy (paper discusses this).
+- LRIP follow-ups: see "LRIP future work" below.
 
 ## LRIP Interaction-Profile Feature Set — Run 2026-07-15
 
@@ -600,279 +558,63 @@ embeddings have already learned the interaction-hotspot information).
   exist for that set (see Part 2 sections). Still blocked on generating LRIP for
   peptides — the transferred ULVSH `.dat` set does not cover it.
 
-## Planned Part 2: Peptide / Mutation Robustness (BH3 / p53 — on hold)
+## Part 2: Peptide / Mutation Robustness — BH3 / p53 arm (on hold)
 
-> **On hold as of 2026-06-29.** The current Part-2 data is
-> `data/peptide_systems/`
-> (see that section above). The BH3/p53 peptide-ligand plan and results below
-> are kept intact because they may return, but are not the active direction.
+> **On hold as of 2026-06-29;** superseded by the active `data/peptide_systems/`
+> SKEMPI set above. Kept because it may return. Data under `data/peptides/`.
+> Full pre-condensation detail (per-file provenance, exact counts) is in git
+> history.
 
-Goal: test whether Boltz-2 (raw scalars *and* the embedding models) tracks the
-**effect of mutations** on binding, using peptide ligands with deep
-mutational series. This directly extends the Rognan paper's mutation/shuffle
-challenges from the receptor side to the *ligand* side, and probes the central
-"physics vs. memorization" question: a model that memorized ChEMBL ligands
-should fail to rank a tight mutational series it never saw.
+**Goal.** Test whether Boltz-2 (raw scalars *and* the embedding models) tracks
+the **effect of mutations** on binding, using peptide ligands with deep
+mutational series — extending the Rognan receptor-side mutation/shuffle
+challenge to the *ligand* side ("physics vs. memorization"). Evaluation is
+**within-series Spearman** and **ΔΔG sign agreement** vs the WT peptide, not
+pooled AUC. LRIP per-residue energies would be especially interpretable here.
 
-Evaluation differs from Part 1: the relevant metrics are **within-series rank
-correlation** (Spearman of predicted vs measured across the mutant set) and
-**ΔΔG sign agreement** relative to the wild-type peptide — not pooled AUC.
-LRIP per-residue energies are especially interpretable here (which interface
-residue drives the mutational effect).
+**Systems and data** (`data/peptides/source/<system>/`, ingest scripts
+`scripts/parse_bh3_sortcery.py` / `parse_p53_li2010.py`):
 
-### Confirmed systems and local data sources (2026-05-20)
+- **BH3 ↔ Mcl-1/Bcl-xL/Bfl-1 (headline).** Keating-lab SORTCERY apparent
+  affinities (Jenson et al. PNAS 2018; repo `papers/peptides/bh3/sortcery_design/`).
+  689 cross-target peptides (Bim/PUMA backgrounds) × 3 receptors.
+- **p53 TAD ↔ MDM2/MDMX (secondary).** Li, Pazgier et al. JMB 2010 SPR
+  Ala-scan of PMI + (17–28)p53; ~21 single point mutants/receptor. Tables
+  encoded as Python literals (PDF tables are raster images).
 
-After auditing the available papers, two systems have sufficient locally-stored
-mutational data to drive Part 2:
+**Cofolding inputs** (`scripts/make_boltz_inputs_{bh3,p53}.py` →
+`data/peptides/boltz/inputs/<system>/<receptor>/input/<peptide_id>.yaml`): each
+YAML is two protein chains (A=receptor, B=peptide) with `properties.affinity.binder: B`.
+Total **2139 runs** (2067 BH3 + 72 p53) — the tractable starting scope; larger
+SORTCERY sets remain behind the same generators.
 
-1. **BH3 peptide ↔ Mcl-1 / Bcl-xL / Bfl-1** — **headline system.**
-   Source: Jenson et al. PNAS 2018 (`papers/peptides/bh3/jenson-et-al-2018-...pdf`)
-   plus the Keating lab SORTCERY data repository cloned at
-   `papers/peptides/bh3/sortcery_design/` (upstream:
-   https://github.com/KeatingLab/sortcery_design). The `csv/` subfolder ships
-   ten files; main + replicate pairs cover Bcl-xL (~4395 unique 22-mer peptides
-   in `x1.csv`/`x1r.csv`), Mcl-1 (~4491 in `m1.csv`/`m1r.csv`), and Bfl-1
-   (~3806 in `f100.csv`/`f100r.csv`). Each row carries the peptide sequence
-   (`protein`), parent background (`bg`: B=Bim, P=PUMA), apparent affinity
-   (`x1_expectedValue` / `m1_expectedValue` / `f100_expectedValue`), apparent
-   binding energy (`*_energy`), and quality flags (`isUnimodal`,
-   `isOneHitWonder`). Peptides differ from Bim or PUMA at up to 8 positions
-   — clean within-background mutational series. Companion structural
-   reference: Jenson, Ryan, Grant, Letai, Keating 2017 eLife
-   (DOI 10.7554/eLife.25541; PUMA-background epistatic variants with X-ray
-   structures), not stored locally but cited as a high-quality validation slice.
+**Mutation-injection design (decided 2026-05-17).** Option A — **re-cofold each
+mutant** (full Boltz-2 per variant; both structure and affinity-head paths live)
+is **PRIMARY and done**. Option B — fix the WT pose and vary only the affinity
+input (isolates the affinity-head path) is a **follow-up diagnostic**, built only
+if A reproduces the Rognan insensitivity. Architecture constraint: keep pose
+generation and affinity scoring separable so B can be added without a rewrite.
 
-2. **p53 TAD peptide ↔ MDM2 / MDMX** — **secondary system.**
-   Mutational data: Li, Pazgier et al. *J Mol Biol* 2010, stored at
-   `papers/peptides/p53_2/1-s2.0-S0022283610002433-main.pdf` (PMID 20226197,
-   PMC2856455). Systematic Ala-scan of PMI (TSFAEYWNLLSP) and (17–28)p53
-   (ETFSDLWKLLPE) — Table 1 (PMI + 16 analogs) and Table 3 ((17–28)p53 + 15
-   analogs) report ITC Kd values against both synMDM2 and synMDMX; plus
-   10 truncation analogs. Net ~17 single-mutant point-substitution variants
-   per scaffold × 2 receptors. Two scaffolds pooled gives ~34 within-series
-   measurements per receptor — just clears the ≥30 threshold. Treat
-   truncations as a separate sub-analysis (length-changes, not point
-   mutations). Structural baseline (synMDM2-PMI, synMDMX-PMI crystal
-   structures): Pazgier et al. PNAS 2009 at `papers/peptides/p53/` — kept
-   as the WT-Kd reference and source of the binding-mode reference structure.
+**First results (2026-05-22, embedding-model arm only — no raw-Boltz scalar
+baseline yet).** Outputs in `runs/peptide_embeddings/`; all use `head_mean`.
 
-### Deferred / dropped systems
+- **BH3** (n=689/receptor): supervised CV Spearman(embeddings→apparent affinity)
+  0.66/0.77/0.79 (Bcl-xL/Mcl-1/Bfl-1). Holds under within-background CV; the one
+  weak case is PUMA-background on Bcl-xL (0.27). Against the SORTCERY replicate
+  **noise ceiling** (0.83/0.96/0.92) the model recovers ~79–86% of achievable
+  ranking signal. Embeddings also capture Bcl-2-family **selectivity** (predicted
+  vs measured receptor preference, Spearman 0.67–0.77).
+- **p53** (too few point mutants for supervision): model-free magnitude probe
+  Spearman(embedding shift-from-WT, |ΔΔG|) 0.80–0.92 (PMI), 0.65–0.72 (p53
+  17–28). WT-anchored ΔΔG-sign agreement = **1.00 on the clear effects**
+  (|ΔΔG| ≥ 1 kcal/mol) in 6/8 series.
+- The embedding shift under mutation is *small* (cosine-to-WT ≥ 0.99, ~2–3.5% of
+  ‖WT‖) — consistent with the Rognan insensitivity concern — but the mutational
+  signal *is* present in the representation feeding Boltz-2's scalar heads.
 
-- **HLA-A*02:01 ↔ nonamer peptide** — *deferred*. The stored Trolle et al.
-  *Bioinformatics* 2015 paper (`papers/peptides/HLA_A0201/`) is the IEDB
-  automated benchmarking framework, not a single-peptide deep mutational scan
-  — its ~4000 measurements are scattered across 17 alleles. A clean
-  single-parent series would need to be curated from IEDB (filter
-  HLA-A*02:01 + 9-mer + quantitative IC50 + ≤1 mutation from a parent
-  epitope) or pulled from Sidney/Sette positional scanning libraries. Set
-  aside until BH3 + p53 are working — the headline systems already cover
-  five receptors (Bcl-xL, Mcl-1, Bfl-1, MDM2, MDMX), which is plenty.
-- **PDZ domain ↔ CRIPT peptide** — *not pursued.* No data downloaded; would
-  have been a tertiary case.
-
-Caveats to design for: assay-type heterogeneity (apparent-Kd from yeast-display
-SORTCERY for BH3 vs SPR competition Kd for p53; **correction** — earlier
-note erroneously said ITC for p53, but Li 2010 used SPR competition,
-Methods page 12 of the PDF), differing affinity dynamic ranges, and the
-fact that Boltz-2's affinity head was trained predominantly on small
-molecules — peptide generalization is exactly the open question, not an
-assumption. The SORTCERY apparent affinities are an internally consistent
-ranking within one target (the appropriate input for Spearman / ΔΔG-sign
-analysis) but should not be cross-compared in absolute units to the p53 SPR
-Kds.
-
-### Ingested datasets (2026-05-20)
-
-Two ingestion scripts and their outputs:
-
-- `scripts/parse_bh3_sortcery.py` → `data/peptides/source/bh3/measurements.tsv`
-  (27,499 long-format rows across 10 SORTCERY CSVs). Per-target unique
-  peptide counts: Bcl-xL 10,142 (includes pilot screen), Mcl-1 4,491,
-  Bfl-1 3,805. All rows pass `is_unimodal=True / is_one_hit_wonder=False`
-  quality flags. Backgrounds: Bim (B) and PUMA (P). Apparent-value range
-  per target ≈ 1.5–11 (monotonic with log10 K_D on the cell-surface scale;
-  sign convention is *higher = tighter* — confirm against the SORTCERY
-  paper before using absolute values).
-
-- `scripts/parse_p53_li2010.py` → `data/peptides/source/p53/measurements.tsv`
-  (72 rows = 2 scaffolds × 2 receptors × 18 peptide entries). The script
-  encodes Li 2010 Tables 1 and 3 as Python literals because both tables
-  are rendered as raster images in the PDF (PNG crops kept under
-  `data/peptides/source/p53/raw/` for audit). PMI/MDM2 dynamic range is 5.5
-  log-units (490 pM → 160 μM); the (17–28)p53/MDMX series is the narrowest
-  at ≈2.9 log-units. F19A and W23A on the p53 scaffold are tagged
-  `analog_class='not_determined'` (SPR could not quantify; excluded from
-  numeric metrics). The A4A row on the PMI scaffold is a no-op control
-  (position 4 is already Ala) tagged `analog_class='control_redundant'`.
-
-For the Part-2 Spearman / ΔΔG-sign analysis, the usable mutational counts
-per receptor are: BH3 — thousands of multi-position variants per target,
-ample. p53 — 11 single-Ala substitutions on PMI + 10 on (17–28)p53 = 21
-single-residue point mutations per receptor; adding the 5+5 truncations
-(treated as a separate sub-analysis) gives 31, just clearing the ≥30
-threshold.
-
-### Boltz-2 cofolding inputs (2026-05-20)
-
-Two YAML generator scripts emit one cofolding input per (peptide, receptor)
-pair. Layout:
-
-    data/peptides/boltz/inputs/<system>/<receptor>/input/<peptide_id>.yaml
-    data/peptides/boltz/inputs/<system>/<receptor>/manifest.tsv
-    data/peptides/boltz/inputs/bh3/peptide_index.tsv  # global peptide_id <-> seq map
-
-Each YAML follows the existing Boltz-2 convention used by ROCK1
-(`data/ulvsh/reference_boltz/inputs/ROCK1/{wt,mut,shuffled}/mol_NN.yaml`): two
-`protein` chains (`id: A` = receptor, `id: B` = peptide ligand) and
-`properties.affinity.binder: B`. Peptides are encoded as protein chains
-rather than as `ligand: smiles:` because they are too long for the
-small-molecule pose head.
-
-- `scripts/make_boltz_inputs_p53.py` — **72 YAMLs** = 36 unique
-  (scaffold, mutation_label) entries × 2 receptors (MDM2, MDMX).
-  Receptors are the Pazgier/Li synthetic constructs synMDM2 (MDM2
-  residues 25–109, Q00987) and synMDMX (MDMX 24–108, O15151). YAMLs
-  for the F19A/W23A "not_determined" rows and the PMI A4A no-op are
-  still emitted (Boltz predictions are useful even where the SPR Kd
-  is missing); their status is tagged in `manifest.tsv`.
-
-- `scripts/make_boltz_inputs_bh3.py` — **2067 YAMLs** = **689 unique
-  cross-target peptides × 3 receptors** (Bcl-xL, Mcl-1, Bfl-1).
-  Cross-target = appearing in the primary (non-replicate, non-pilot)
-  sort for *all three* receptors. Strictly the 1 nM main sort for
-  Bcl-xL/Mcl-1 and the 100 nM main sort for Bfl-1; the 100 nM Bcl-xL
-  main sort (x100.csv) is also pooled into the Bcl-xL leg, which is
-  why the intersection is 689 rather than the 537 quoted earlier from
-  x1.csv alone. Receptor constructs: Bcl-xL ΔTM 1–209 (Q07817), Mcl-1
-  binding-domain 172–327 (Q07820), Bfl-1 ΔTM 1–151 (Q16548). Replicate
-  and pilot rows remain in the upstream `measurements.tsv` for noise
-  estimation.
-
-The cofolding workload is **2139 Boltz-2 runs** combined (72 + 2067).
-This is the *starting* scope chosen 2026-05-20 to keep the first pass
-tractable — the BH3 main+replicate full set (~8.4 k) and the pilot
-screen (~18 k total) remain available behind the same generator script
-if scope expands later.
-
-### Mutation injection: two designs
-
-The affinity head never reads sequence directly — it reads the structure
-trunk's representation of the cofolded complex. A mutation can therefore move
-the prediction via (1) the **structure path** (trunk re-poses the complex) or
-(2) the **affinity-head path** (head reacts to changed interface chemistry on
-a given structure). Two experimental designs separate these:
-
-- **Option A — re-cofold each mutant (PRIMARY).** Change the peptide
-  sequence and run the full Boltz-2 pipeline fresh per variant; both paths
-  live. This is the realistic, end-to-end, headline experiment and the
-  default for Part 2. (User confirmed 2026-05-17: re-running Boltz-2 for
-  every variant.)
-- **Option B — fixed wild-type pose, vary only the affinity input
-  (FOLLOW-UP DIAGNOSTIC).** Pin the structure to the WT cofolded complex
-  (template / distance-constraint conditioning, or feeding the WT structure
-  directly into the affinity module if the `../boltz` fork exposes it) so the
-  trunk representation is ~constant across variants; only the mutated residue
-  identity changes. Kills the structure path, isolating the affinity-head
-  path.
-
-Rationale: the Rognan paper found Boltz-2 affinity largely *insensitive* to
-binding-site mutations. If Option A reproduces that flatness, Option A alone
-cannot say whether the trunk failed to re-pose or the head ignored a real
-structural change — Option B is the diagnostic that localizes the failure.
-Build B only if A shows the insensitivity.
-
-**Architecture constraint:** keep pose generation and affinity scoring as
-separable pipeline steps so the fixed-template path (Option B) can be added
-later without a rewrite. Do not couple them.
-
-### Part 2 first results (2026-05-22)
-
-Embeddings for all 2139 cofolded peptide complexes were extracted (Option A,
-re-cofold per variant) and filed under
-`data/peptides/modeling/features/boltz_embeddings/<system>__<receptor>/`.
-Two analyses were run; outputs in `runs/peptide_embeddings/`. Both use
-`head_mean` (the ensemble-averaged representation immediately before the scalar
-affinity heads).
-
-**Embedding sensitivity probe** (`scripts/analyze_peptide_embeddings.py` →
-`embedding_sensitivity.json`) — label-free. All embeddings are unique (QC: no
-degenerate extraction). On p53 (WT-resolvable ids) the embedding *does* move
-under mutation and the largest shifts land on the known anchor residues — W23A
-(by far the biggest) and F19A on the p53(17–28) helix, W7A then F3A on PMI. But
-the magnitude is small: cosine-to-WT stays ≥0.99 and the mean shift is only
-~2–3.5% of ‖WT‖ — consistent with the Rognan "insensitivity" concern.
-
-**Part 2 analysis** (`scripts/part2_analysis.py` → `part2_results.json`).
-NOTE: this is the *embedding-model* arm only — no peptide affinity JSONs were
-extracted, so there is **no raw-Boltz scalar baseline yet** (the direct Rognan
-comparison still needs the JSONs).
-
-- **BH3** — supervised CV (KFold-5) Spearman of embeddings → `apparent_value`
-  (higher = tighter), n=689/receptor: Bcl-xL 0.657, Mcl-1 0.766, Bfl-1 0.791
-  (all p ≤ 1e-86, Pearson 0.62/0.82/0.78). **Within-background CV** (refined
-  2026-05-25 — a model CV'd *only* within Bim or PUMA, the honest within-series
-  read): Bim 0.69/0.78/0.77, PUMA 0.27/0.66/0.75. These track the pooled split
-  closely, so the ranking borrows no cross-background signal; PUMA-background on
-  Bcl-xL (0.27) is the one weak case, now confirmed robust.
-- **p53** — only ~10–11 point mutants per scaffold per receptor, too few for a
-  384-dim supervised model, so the headline is the *model-free magnitude probe*:
-  Spearman(embedding shift-from-WT, measured |ΔΔG|). PMI 0.80–0.92,
-  p53(17–28) 0.65–0.72 (point only); including truncations 0.75–0.85. Secondary,
-  n-limited: LOO-Ridge Spearman 0.66–0.95, and a **WT-anchored ΔΔG-sign
-  agreement** (refined 2026-05-25: predicted `pKd_WT(held-out) − pKd_mut` vs
-  measured ΔΔG). Overall sign agreement is 0.64–0.87, but on the *clear effects*
-  (|ΔΔG| ≥ 1 kcal/mol) it is **1.00 in 6/8 series** — every clearly
-  (de)stabilizing mutation gets the right direction; disagreements sit on
-  near-neutral mutations within assay noise.
-
-**Takeaway:** the mutational signal is clearly present in the representation that
-feeds Boltz-2's scalar affinity heads, for both systems — contrasting with the
-Rognan finding that the raw scalars were largely mutation-insensitive. The open
-question is whether Boltz-2's *own scalar output* preserves it.
-
-**Open Part-2 items:**
-1. **(remaining gap — now external-compute-bound only)** Raw-Boltz scalar
-   baseline (B2-A / B2-C), the apples-to-apples Rognan comparison the
-   embedding-model arm cannot make. The *analysis* is done and verified
-   (`scripts/part2_raw_boltz_baseline.py`, smoke-tested on synthetic JSONs); it
-   reads `data/peptides/boltz/outputs/<system>/<receptor>/<pid>/affinity_<pid>.json`
-   (Part-1 schema: `affinity_pred_value` lower=stronger, `affinity_probability_binary`
-   higher=stronger), joins to the manifests, and prints raw-Boltz vs the
-   embedding arm side by side. The only thing left is **running Boltz-2 over the
-   2139 input YAMLs** (external GPU job via the `../boltz` fork) so the JSONs
-   exist; re-running the script then produces the baseline.
-
-- **[done 2026-05-25]** WT-anchored ΔΔG-sign metric (replaced the crude
-  `sign_agreement_vs_median`); sign agreement = 1.00 on |ΔΔG| ≥ 1 kcal/mol in
-  6/8 series. In `scripts/part2_analysis.py` (`analyze_p53`).
-- **[done 2026-05-25]** BH3 within-background CV (model CV'd within each Bim/PUMA
-  background); within-series ranking holds, PUMA-on-Bcl-xL stays the weak case.
-  In `scripts/part2_analysis.py` (`analyze_bh3`).
-
-### Part 2 extras (2026-05-25)
-
-`scripts/part2_extras.py` → `runs/peptide_embeddings/part2_extras.json`. Three
-follow-ups that need no new data:
-
-- **Embedding-key sweep** — no dominant view (BH3 CV Spearman 0.64–0.80, p53
-  magnitude probe 0.69–0.83 across `pair_mean`/`head_ens1`/`head_ens2`/`head_mean`
-  /`pair_mean+head_mean`). `head_mean` and the `pair_mean+head_mean` concat are
-  consistently among the best, so the `head_mean` default is fine; best-per-target
-  varies (e.g. `pair_mean` 0.668 on Bcl-xL, `head_ens1` 0.830 on p53/MDM2),
-  echoing Part 1's "no universal best component".
-- **Replicate noise ceiling (BH3)** — test-retest Spearman between the main and
-  replicate SORTCERY sorts, **computed within concentration** (pooling Bcl-xL's
-  1 nM x1 and 100 nM x100 sorts had deflated its ceiling to 0.505 — a confound).
-  Concentration-matched: Bcl-xL 0.831 (@1 nM), Mcl-1 0.955 (@1 nM), Bfl-1 0.924
-  (@100 nM). The head_mean CV model (0.657/0.766/0.791) recovers **~79/80/86 %**
-  of the achievable ranking signal — labels are highly reproducible, so the
-  ~15–20 % gap is real model headroom, not label noise (Bcl-xL is both the
-  hardest target and has the lowest ceiling).
-- **Cross-target selectivity (BH3)** — the 689 peptides are folded against all
-  three receptors, so predicted vs measured *receptor preference* can be scored.
-  Affinities are percentile-rank-normalised within each receptor first (SORTCERY
-  values are only internally consistent per target), then selectivity =
-  percentile[r1] − percentile[r2]. Spearman of predicted vs measured selectivity:
-  Mcl-1/Bcl-xL 0.766, Bfl-1/Bcl-xL 0.728, Mcl-1/Bfl-1 0.670 (all p ≤ 1e-91,
-  n=689). The embeddings capture Bcl-2-family **selectivity**, not just
-  per-receptor affinity — the headline strength of the BH3 system.
+**Open item:** the raw-Boltz scalar baseline (B2-A/B2-C within-series Spearman +
+ΔΔG-sign, the direct Rognan comparison) is built and verified
+(`scripts/part2_raw_boltz_baseline.py`) but blocked on running Boltz-2 over the
+2139 input YAMLs so the affinity JSONs exist; re-running the script then produces
+it. Analyses: `scripts/analyze_peptide_embeddings.py`, `part2_analysis.py`,
+`part2_extras.py`.
